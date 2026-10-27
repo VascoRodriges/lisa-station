@@ -7,9 +7,20 @@ from pathlib import Path
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--zig", default="zig")
+parser.add_argument(
+    "--target",
+    choices=("station-ctl", "net-owner-probe", "vendor-launch-probe", "mode-store-probe"),
+    default="station-ctl",
+)
 args = parser.parse_args()
 root = Path(__file__).resolve().parents[1]
-output = root / "build/station-ctl.armhf"
+sources = {
+    "station-ctl": "station_ctl.c",
+    "net-owner-probe": "net_owner_probe.c",
+    "vendor-launch-probe": "vendor_launch_probe.c",
+    "mode-store-probe": "mode_store_probe.c",
+}
+output = root / "build" / (args.target + ".armhf")
 output.parent.mkdir(exist_ok=True)
 assert subprocess.check_output([args.zig, "version"], text=True).strip() == "0.14.1"
 subprocess.run(
@@ -23,7 +34,7 @@ subprocess.run(
         "-Wall",
         "-Wextra",
         "-Werror",
-        str(root / "controller/station_ctl.c"),
+        str(root / "controller" / sources[args.target]),
         "-o",
         str(output),
     ],

@@ -29,7 +29,26 @@ jobs:
           tar -xf zig.tar.xz
           echo "$PWD/zig-x86_64-linux-0.14.1" >> "$GITHUB_PATH"
       - run: python controller/build.py
+      - run: python controller/build.py --target net-owner-probe
+      - run: python controller/build.py --target vendor-launch-probe
+      - run: python controller/build.py --target mode-store-probe
+      - name: Exercise mode storage on the host
+        run: |
+          cc -O2 -Wall -Wextra -Werror controller/mode_store_probe.c -o build/mode-store-host
+          ./build/mode-store-host
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: station-controller-armhf
           path: build/station-ctl.armhf
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: station-network-qualification-armhf
+          path: build/net-owner-probe.armhf
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: station-startup-qualification-armhf
+          path: build/vendor-launch-probe.armhf
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: station-mode-storage-qualification-armhf
+          path: build/mode-store-probe.armhf

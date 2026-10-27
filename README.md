@@ -55,6 +55,10 @@ See the [roadmap](docs/ROADMAP.md) for scope and acceptance criteria. Mode
 switching, an Assist satellite, continuous audio, an independent media player,
 Music Assistant output, timers and alarms are **not implemented in v0.1.0**.
 
+Development notes: [feature migration matrix](docs/FEATURE_PARITY.md) and
+[speaker-local isolation design](docs/ISOLATION_DESIGN.md). Experimental kernel
+qualification tools are separate from the diagnostic integration's commands.
+
 ## Development
 
 Use Python 3.14 on Linux in an isolated virtual environment:
