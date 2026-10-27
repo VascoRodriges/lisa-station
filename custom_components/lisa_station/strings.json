@@ -1,0 +1,43 @@
+{
+  "title": "Lisa Station",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect a Station",
+        "description": "Diagnostic preview. Install the status agent and a dedicated command-restricted SSH key first. Supply the verified SSH server PUBLIC key, never a private key. Mode switching and voice operation are not available in this release.",
+        "data": {"host": "Host", "port": "SSH port", "username": "SSH user", "private_key_file": "Dedicated private key file inside Home Assistant", "server_host_key": "Verified SSH server public key (ssh-ed25519 ...)"}
+      },
+      "reconfigure": {
+        "title": "Connection settings",
+        "description": "The SSH server key identifies the existing device. A different key requires separate device verification.",
+        "data": {"host": "Host", "port": "SSH port", "username": "SSH user", "private_key_file": "Dedicated private key file inside Home Assistant", "server_host_key": "Verified SSH server public key"}
+      },
+      "reauth_confirm": {
+        "title": "Restore SSH access",
+        "description": "Check the dedicated key file and its command-restricted authorization on the station.",
+        "data": {"host": "Host", "port": "SSH port", "username": "SSH user", "private_key_file": "Dedicated private key file inside Home Assistant", "server_host_key": "Verified SSH server public key"}
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not read station status. Check connectivity and agent installation.",
+      "invalid_auth": "The dedicated private key is unreadable, encrypted, or not authorized.",
+      "host_key_mismatch": "SSH server key mismatch. Verify the device before changing the pinned key.",
+      "invalid_settings": "Check the host, port, user, absolute key file path, and server public key.",
+      "unsupported_agent": "Unsupported or inconsistent controller status. Use the matching agent version."
+    },
+    "abort": {"already_configured": "This station is already configured.", "wrong_device": "The server key belongs to a different device.", "reconfigure_successful": "Connection settings updated.", "reauth_successful": "SSH access restored."}
+  },
+  "entity": {
+    "sensor": {
+      "controller_state": {"name": "Controller state", "state": {"unmanaged": "Diagnostic preview"}},
+      "stock_workers": {"name": "Stock workers"},
+      "stock_launchers": {"name": "Stock launchers"},
+      "stopped_launchers": {"name": "Stopped launchers"}
+    },
+    "binary_sensor": {
+      "physical_mute": {"name": "Physical microphone mute"},
+      "root_readonly": {"name": "Root filesystem read-only"},
+      "isolation_confirmed": {"name": "Yandex isolation confirmed"}
+    }
+  }
+}

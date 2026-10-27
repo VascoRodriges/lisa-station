@@ -1,0 +1,6 @@
+pytest-homeassistant-custom-component==0.13.375
+asyncssh==2.24.1
+ruff==0.14.3
+# HA's Cognito dependency needs dateutil < 3; pin to avoid expensive resolver backtracking.
+python-dateutil==2.9.0.post0
+boto3==1.43.120

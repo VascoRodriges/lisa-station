@@ -1,0 +1,12 @@
+{
+  "domain": "lisa_station",
+  "name": "Lisa Station",
+  "codeowners": ["@VascoRodriges"],
+  "config_flow": true,
+  "documentation": "https://github.com/VascoRodriges/lisa-station",
+  "integration_type": "device",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/VascoRodriges/lisa-station/issues",
+  "requirements": ["asyncssh==2.24.1"],
+  "version": "0.1.0"
+}
