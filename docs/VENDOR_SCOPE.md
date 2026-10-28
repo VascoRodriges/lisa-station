@@ -73,6 +73,11 @@ python -m controller.vendor_inventory YOUR_SPEAKER_SSH_ALIAS \
 
 ## Completion still blocked
 
+The separate [file/mapping audit](RELAY_QUEUES.md) now identifies collector
+SQLite/telemetry LMDB state, shared-system-log ingress, unlinked objects and
+mapping-only holders. It distinguishes device state and hardware mappings from
+queues and never reads their contents or quarantines them automatically.
+
 The independent [diagnostics guard](DIAGNOSTICS_GUARD.md) now qualifies this
 role's gated lifecycle and private ephemeral log paths. Its exact shared-memory
 object and D-Bus connection are explicit local relay dependencies, not evidence

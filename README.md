@@ -79,6 +79,9 @@ The [ALSA diagnostics guard](docs/DIAGNOSTICS_GUARD.md) passed a bounded real
 service trial with private ephemeral logs, direct internet-socket denial and
 verified stock restoration. Local D-Bus/shared-memory relays remain explicit;
 this backend is not installed into boot or exposed to HA mode controls yet.
+The [file/mapping queue audit](docs/RELAY_QUEUES.md) identifies shared-system-log
+ingress, retained descriptors and mapping-only holders. It keeps unresolved
+relay/queue requirements explicit and never deletes mixed device state.
 
 ## Development
 

@@ -43,6 +43,7 @@ jobs:
       - run: python controller/build.py --target closed-flow-probe
       - run: python controller/build.py --target tcp-evidence-probe
       - run: python controller/build.py --target diagnostics-guard-probe
+      - run: python controller/build.py --target relay-evidence-probe
       - name: Exercise mode storage on the host
         run: |
           cc -O2 -Wall -Wextra -Werror controller/mode_store_probe.c -o build/mode-store-host
@@ -58,6 +59,8 @@ jobs:
           cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/closed_flow_probe.c -o build/closed-flow-host
           cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/tcp_evidence_probe.c -o build/tcp-evidence-host
           ./build/tcp-evidence-host --selftest
+          cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/relay_evidence_probe.c -o build/relay-evidence-host
+          ./build/relay-evidence-host --selftest
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: station-controller-armhf
@@ -118,3 +121,7 @@ jobs:
         with:
           name: station-diagnostics-guard-armhf
           path: build/diagnostics-guard-probe.armhf
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: station-relay-evidence-armhf
+          path: build/relay-evidence-probe.armhf
