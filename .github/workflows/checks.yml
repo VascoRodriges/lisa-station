@@ -38,6 +38,7 @@ jobs:
       - run: python controller/build.py --target service-gate-probe
       - run: python controller/build.py --target startup-guardian-probe
       - run: python controller/build.py --target station-service
+      - run: python controller/build.py --target closed-transition-probe
       - name: Exercise mode storage on the host
         run: |
           cc -O2 -Wall -Wextra -Werror controller/mode_store_probe.c -o build/mode-store-host
@@ -46,6 +47,8 @@ jobs:
           ./build/service-gate-host
           cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/startup_guardian_probe.c -o build/startup-guardian-host
           ./build/startup-guardian-host
+          cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/closed_transition_probe.c -o build/closed-transition-host
+          ./build/closed-transition-host
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: station-controller-armhf
@@ -86,3 +89,7 @@ jobs:
         with:
           name: station-service-backend-armhf
           path: build/station-service.armhf
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: station-closed-transition-qualification-armhf
+          path: build/closed-transition-probe.armhf

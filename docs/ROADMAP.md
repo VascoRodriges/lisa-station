@@ -8,7 +8,7 @@ This roadmap distinguishes shipped code from acceptance targets.
 |---|---|---|---|
 | 1 | Status controller, pinned transport, UI setup and diagnostic entities | Real device status; incompatible data rejected; offline state safe; no false privacy claim | v0.1.0 |
 | 2 | Speaker-local vendor isolation | Cover senders outside the main launcher, descendants, old sockets, local relays, DNS, IPv4/IPv6 and telemetry queues; other applications retain internet | Ownership/flow tests passed; independent DNS/time profiles validated in parallel on device; production policy not installed |
-| 3 | Persistent mode controller | Alice / Lisa / Paused, serialized transitions, verified actual state, boot enforcement before vendor startup, fail closed, explicit return to Alice | Intent/admission and 46 guardian lifecycle checks passed; fixed quasar backend qualified with real startup/closed recovery; installed boot gates and complete policy executor pending |
+| 3 | Persistent mode controller | Alice / Lisa / Paused, serialized transitions, verified actual state, boot enforcement before vendor startup, fail closed, explicit return to Alice | Durable close engine: 65 transaction, 34 admission and 54 guardian checks passed; scoped quasar policy/stop trial implemented; production callbacks, boot gates and Alice return pending |
 | 4 | Permanent speech service | No workstation dependency; local KWS, standalone VQE, target-speaker extraction on a server, Assist through response playback, physical mute honored | Bounded research prototype exists outside this release |
 | 5 | Assist satellite and voice settings | Pipeline choice, listening/processing/responding states, LED feedback, measured latency and recovery | Planned |
 | 6 | Independent media player | Playback/volume/metadata, files/URLs/radio, Music Assistant without the old Yandex Station backend, announcements and volume restoration | Planned |
@@ -51,3 +51,6 @@ See [DNS/time profiles and startup admission](SERVICE_PROFILES.md) for the new
 components, measured results and remaining deployment requirements.
 The [startup guardian](STARTUP_GUARDIAN.md) now links admission to a tracked
 process and closed reconciliation; production boot/mode switching remains pending.
+The [durable close engine](CLOSED_TRANSITION.md) adds interruption recovery and
+a persistent startup fence. Its scoped group-policy trial is not whole-device
+isolation and does not enable the HA mode selector.

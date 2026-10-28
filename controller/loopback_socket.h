@@ -8,7 +8,7 @@
 #include <unistd.h>
 #include <linux/inet_diag.h>
 struct pair { int client, peer; };
-static int make_pair(int family, int mapped, struct pair *pair) {
+static inline int make_pair(int family, int mapped, struct pair *pair) {
     int server = socket(family, SOCK_STREAM | SOCK_CLOEXEC, 0);
     if (server < 0) return -1;
     struct sockaddr_storage address = {0};
@@ -39,7 +39,7 @@ fail:
     return -1;
 }
 
-static int exchange(struct pair *pair) {
+static inline int exchange(struct pair *pair) {
     const char token[] = "lisa-socket-probe";
     char data[sizeof(token)];
     if (send(pair->client, token, sizeof(token), MSG_NOSIGNAL) != sizeof(token)) return 0;
@@ -48,7 +48,7 @@ static int exchange(struct pair *pair) {
         sizeof(token) && !memcmp(data, token, sizeof(token));
 }
 
-static int socket_id(int fd, int family, struct inet_diag_sockid *id) {
+static inline int socket_id(int fd, int family, struct inet_diag_sockid *id) {
     struct sockaddr_storage local = {0}, peer = {0};
     socklen_t length = sizeof(local);
     if (getsockname(fd, (struct sockaddr *)&local, &length)) return -1;

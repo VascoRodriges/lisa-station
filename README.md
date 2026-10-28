@@ -66,6 +66,9 @@ Independent [DNS/time profiles and startup admission](docs/SERVICE_PROFILES.md)
 have been qualified separately; boot enforcement is not installed yet.
 The [fixed startup backend](docs/STARTUP_GUARDIAN.md) also passed a bounded real
 launcher/start-stop-recovery trial. It is not yet connected to the HA mode selector.
+The [durable close engine](docs/CLOSED_TRANSITION.md) adds a persistent startup
+fence, interruption recovery and a scoped vendor policy/stop trial. Complete
+production isolation, boot enforcement and explicit Alice return remain pending.
 
 ## Development
 

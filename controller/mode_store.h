@@ -71,7 +71,17 @@ static inline enum store_result mode_store_read(int directory, uid_t owner, stru
     return STORE_OK;
 }
 
+/* Presence, corruption or inability to inspect a close fence all deny Alice.
+ * The transaction reader interprets its contents separately; boot never guesses. */
+static inline int mode_store_close_pending(int directory, uid_t owner) {
+    if (!store_directory_valid(directory, owner)) return 1;
+    struct stat info;
+    if (!fstatat(directory,"closed.request",&info,AT_SYMLINK_NOFOLLOW)) return 1;
+    return errno!=ENOENT;
+}
+
 static inline enum lisa_mode mode_store_boot_choice(int directory, uid_t owner) {
+    if (mode_store_close_pending(directory,owner)) return LISA_MODE_PAUSED;
     struct mode_record record;
     return mode_store_read(directory, owner, &record) == STORE_OK ? record.requested : LISA_MODE_PAUSED;
 }

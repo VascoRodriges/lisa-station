@@ -286,7 +286,8 @@ static inline void guardian_run(int state, int runtime, uid_t owner, const char 
     if (guardian_save(runtime,owner,record_name,record) || !guardian_readable(setup[0],4000) ||
         read(setup[0],&token,1)!=1 || token!='P' || guardian_termination) goto finish;
     record->child=child; record->child_ticks=stamp.ticks; record->phase=G_PREPARED;
-    if (guardian_save(runtime, owner, record_name, record) || write(go[1], "G", 1) != 1) goto finish;
+    if (guardian_save(runtime, owner, record_name, record) || mode_store_close_pending(state,owner) ||
+        !gate_permit_valid(runtime,owner,lease->revision,boot) || write(go[1], "G", 1) != 1) goto finish;
     close(go[1]); go[1]=-1;
     if (!guardian_readable(setup[0], 4000) || read(setup[0], &token, 1) != 0 ||
         !guardian_exec_observed(child, stamp.ticks, &expected, spec) || guardian_termination) goto finish;
@@ -303,7 +304,7 @@ static inline void guardian_run(int state, int runtime, uid_t owner, const char 
         siginfo_t status = {0};
         if (waitid(P_PID, child, &status, WEXITED | WNOHANG | WNOWAIT) || status.si_pid) break;
         struct gate_lease current = {-1,0};
-        enum gate_result allowed = gate_acquire(state, runtime, owner, boot, &current);
+        enum gate_result allowed = gate_acquire_running(state, runtime, owner, boot, &current);
         int same = allowed == GATE_GRANTED && current.revision == record->revision;
         gate_release(&current);
         if (!same) break;

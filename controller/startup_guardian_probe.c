@@ -83,6 +83,11 @@ static pid_t contender(int state,int runtime,uid_t owner,uint64_t revision,int r
     for (unsigned i=0;i<200;++i) {
         struct guardian_record record;
         if (!guardian_read(runtime,owner,"fixture.child",&record) && record.phase==G_FORKED) {
+            if(crash==2) {
+                int fence=openat(state,"closed.request",O_WRONLY|O_CREAT|O_EXCL|O_CLOEXEC,0600);
+                if(fence<0 || store_write_all(fence,"pending\n",8) || close(fence) || write(report,"F",1)!=1) _exit(16);
+                _exit(0);
+            }
             if (crash) {
                 struct process_stamp stamp;
                 if (process_stamp(record.guardian,&stamp) || stamp.parent!=getppid()) _exit(12);
@@ -172,6 +177,12 @@ int main(int argc,char **argv) {
     watcher=-1; close(channel[0]); spec.prepare=NULL;
     CHECK(!guardian_read(runtime,owner,"fixture.child",&record) && record.phase==G_RUNNING &&
         record.child==started.record.child && process_live(record.child,record.child_ticks),"running_journal_matches_process");
+    int fence=openat(state,"closed.request",O_WRONLY|O_CREAT|O_EXCL|O_CLOEXEC,0600);
+    CHECK(fence>=0 && !store_write_all(fence,"pending\n",8) && !close(fence) &&
+        guardian_start(state,runtime,owner,BOOT,&spec,&duplicate)==GUARD_DENIED,"pending_close_blocks_new_start");
+    struct timespec pending_delay={0,250000000}; nanosleep(&pending_delay,NULL);
+    CHECK(process_live(record.child,record.child_ticks),"pending_close_keeps_existing_actor_until_denial");
+    CHECK(!unlinkat(state,"closed.request",0),"reset_pending_fixture");
     CHECK(guardian_start(state,runtime,owner,BOOT,&spec,&duplicate)==GUARD_BUSY,"duplicate_start_rejected");
     CHECK(guardian_stop(runtime,owner,BOOT,&spec)==GUARD_OK && reap(started.record.guardian) &&
         gone(record.child,record.child_ticks),"stop_over_verified_unix_control");
@@ -229,6 +240,20 @@ int main(int argc,char **argv) {
     CHECK(request_mode(state,owner,intent.revision,LISA_MODE_PAUSED,&intent)==STORE_OK &&
         guardian_reconcile_closed(state,runtime,owner,BOOT,&spec)==GUARD_OK,"pre_exec_crash_recovered_closed");
     CHECK(request_mode(state,owner,intent.revision,LISA_MODE_ALICE,&intent)==STORE_OK &&
+        !fixture_permit(runtime,intent.revision) && !pipe(channel),"prepare_pending_admitted_start");
+    watcher=contender(state,runtime,owner,intent.revision,channel[1],2);
+    CHECK(watcher>1,"pending_close_contender");
+    close(channel[1]); spec.prepare=delayed_prepare;
+    CHECK(guardian_start(state,runtime,owner,BOOT,&spec,&started)==GUARD_FAILED &&
+        read(channel[0],&result,1)==1 && result=='F' && reap(watcher),"pending_close_cancels_admitted_start");
+    watcher=-1; close(channel[0]); spec.prepare=NULL;
+    CHECK(mode_store_boot_choice(state,owner)==LISA_MODE_PAUSED &&
+        !guardian_read(runtime,owner,"fixture.child",&record) && !process_live(record.child,record.child_ticks),
+        "cancelled_start_cannot_boot_stale_alice");
+    CHECK(request_mode(state,owner,intent.revision,LISA_MODE_PAUSED,&intent)==STORE_OK &&
+        guardian_reconcile_closed(state,runtime,owner,BOOT,&spec)==GUARD_OK &&
+        mode_store_close_pending(state,owner) && !unlinkat(state,"closed.request",0),"cancelled_start_recovery_keeps_fence");
+    CHECK(request_mode(state,owner,intent.revision,LISA_MODE_ALICE,&intent)==STORE_OK &&
         !fixture_permit(runtime,intent.revision),"prepare_unknown_inventory_case");
     spec.actors_absent=absence_unknown;
     CHECK(guardian_start(state,runtime,owner,BOOT,&spec,&started)==GUARD_OK &&
@@ -262,7 +287,8 @@ cleanup:
         unlinkat(runtime,"fixture.child",0); unlinkat(runtime,"fixture.start-lock",0);
         unlinkat(runtime,"fixture.control",0); unlinkat(runtime,"vendor.permit",0); close(runtime);
     }
-    if (state>=0) { unlinkat(state,"mode.state",0); unlinkat(state,"mode.lock",0); close(state); }
+    if (state>=0) { unlinkat(state,"mode.state",0); unlinkat(state,"mode.lock",0);
+        unlinkat(state,"closed.request",0); close(state); }
     unlinkat(directory,"run",AT_REMOVEDIR); unlinkat(directory,"state",AT_REMOVEDIR);
     unlinkat(directory,"actor",0); close(directory);
     int removed=!rmdir(path);

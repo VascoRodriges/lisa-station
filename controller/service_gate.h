@@ -39,12 +39,13 @@ static inline int gate_permit_valid(int runtime, uid_t owner, uint64_t revision,
     return length > 0 && (size_t)length == used && !memcmp(actual, expected, used);
 }
 
-static inline enum gate_result gate_acquire(int state, int runtime, uid_t owner,
-                                     const char *boot, struct gate_lease *lease) {
+static inline enum gate_result gate_acquire_internal(int state, int runtime, uid_t owner,
+                                     const char *boot, struct gate_lease *lease,int starting) {
     if (lease->descriptor >= 0) return GATE_DENIED;
     lease->revision = 0;
     if (!store_directory_valid(state, owner) || !store_directory_valid(runtime, owner) ||
         !gate_boot_valid(boot)) return GATE_DENIED;
+    if(starting && mode_store_close_pending(state,owner)) return GATE_DENIED;
     int lock = openat(state, "mode.lock", O_RDWR | O_CREAT | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC, 0600);
     if (lock < 0) return GATE_DENIED;
     if (!store_file_valid(lock, owner)) { close(lock); return GATE_DENIED; }
@@ -53,12 +54,24 @@ static inline enum gate_result gate_acquire(int state, int runtime, uid_t owner,
         close(lock); return busy ? GATE_BUSY : GATE_DENIED;
     }
     struct mode_record record;
-    if (mode_store_read(state, owner, &record) != STORE_OK || record.requested != LISA_MODE_ALICE ||
+    if ((starting && mode_store_close_pending(state,owner)) ||
+        mode_store_read(state, owner, &record) != STORE_OK || record.requested != LISA_MODE_ALICE ||
         !gate_permit_valid(runtime, owner, record.revision, boot)) {
         close(lock); return GATE_DENIED;
     }
     lease->descriptor = lock; lease->revision = record.revision;
     return GATE_GRANTED;
+}
+
+static inline enum gate_result gate_acquire(int state,int runtime,uid_t owner,const char *boot,struct gate_lease *lease) {
+    return gate_acquire_internal(state,runtime,owner,boot,lease,1);
+}
+
+/* A pending fence blocks new starts immediately. Existing actors keep their
+ * old admission until the executor has denied traffic and revoked the permit.
+ * This prevents an early shutdown/reset before the network barrier is in place. */
+static inline enum gate_result gate_acquire_running(int state,int runtime,uid_t owner,const char *boot,struct gate_lease *lease) {
+    return gate_acquire_internal(state,runtime,owner,boot,lease,0);
 }
 
 static inline void gate_release(struct gate_lease *lease) {

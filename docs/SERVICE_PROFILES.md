@@ -83,11 +83,13 @@ lease, then starting an unguarded process is unsafe.** The controller must publi
 permits under the same transition serialization only after verifying chosen
 profiles and policy. A permit is admission evidence, not network privacy proof.
 
-`service-gate-probe` passed **31 checks on the speaker's writable storage**:
+`service-gate-probe` passed **34 checks on the speaker's writable storage**:
 concurrent transition/start admission, revocation, revision/boot changes,
 malformed files, permissions, links and occupied-lease handling. Fixtures were
 removed; no real mode record, permit or service was changed. The same test runs
-without root on the Linux CI host.
+without root on the Linux CI host. A persistent close fence additionally denies
+new admission and boot-time Alice choice even with a fresh Alice intent/permit;
+existing actors retain admission until network denial and permit revocation.
 
 ```sh
 python controller/build.py --target service-gate-probe
@@ -95,8 +97,8 @@ python controller/build.py --target service-gate-probe
 
 ## Remaining integration work
 
-- Connect the implemented guardian to the transition executor, with observed
-  policy/profile validation before publishing runtime permits.
+- Complete the production policy/profile callbacks around the implemented
+  [closed-transition engine](CLOSED_TRANSITION.md) before publishing permits.
 - Enforce boot policy before diagnostics and all vendor launch paths, including
   init wrappers and launcher restarts; retain independent root SSH recovery.
 - Make DNS/time restarts choose the correct explicit profiles. Missing or bad

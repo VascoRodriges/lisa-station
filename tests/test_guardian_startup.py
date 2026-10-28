@@ -39,6 +39,45 @@ def test_complete_guardian_trial():
     assert evaluate_events(events())
 
 
+def closed_events():
+    rows = events()
+    rows[6].update(operation="close-quasar", transition_phase="complete")
+    common = dict(
+        event="station-service",
+        operation="check-quasar-policy",
+        revision=0,
+        guardian_pid=0,
+        child_pid=0,
+        isolation_verified=False,
+    )
+    rows[6:6] = [
+        dict(common, result="failed"),
+        dict(common, result="ok"),
+        dict(event="policy-controls", ipv4=True, ipv6=True),
+    ]
+    return rows
+
+
+def test_complete_closed_policy_trial():
+    assert evaluate_events(closed_events(), True)
+
+
+@pytest.mark.parametrize(
+    "fault", ("missing_v6_not_rejected", "no_complete_phase", "control_blocked", "unverified_scope")
+)
+def test_incomplete_closed_policy_trial_rejected(fault):
+    rows = closed_events()
+    if fault == "missing_v6_not_rejected":
+        rows[6]["result"] = "ok"
+    elif fault == "no_complete_phase":
+        rows[9]["transition_phase"] = "network_denied"
+    elif fault == "control_blocked":
+        rows[8]["ipv6"] = False
+    elif fault == "unverified_scope":
+        rows[9]["isolation_verified"] = True
+    assert not evaluate_events(rows, True)
+
+
 @pytest.mark.parametrize(
     "fault", ("duplicate", "revision", "denied", "absence", "capture", "pid", "isolation", "partial", "extra")
 )

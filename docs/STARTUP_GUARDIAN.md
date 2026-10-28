@@ -108,13 +108,16 @@ python -m controller.qualify_guardian_startup YOUR_SPEAKER_SSH_ALIAS \
   --ssh-config YOUR_SSH_CONFIG --allow-temporary-stock-restart
 ```
 
-The guardian suite passed **46 checks on the speaker's writable storage** and
+The guardian suite passed **54 checks on the speaker's writable storage** and
 on a separate Linux host. Tests use their own fixture executable without set-ID bits or file capabilities,
 not the firmware's set-ID BusyBox. They cover concurrent mode/start, duplicate
 starts, actual exec observation, descriptor leakage (including above a lowered soft limit), permit revocation, closed
 mode, failed observation, guardian crashes before/after exec, stale/corrupt
 journals, unrelated-process survival and unknown actor inventory. Root device
 tests also change child credentials during the interrupted preparation window.
+Pending close fences deny new startup and cancel a prepared child before exec;
+the running guardian waits for network denial and permit revocation before
+stopping an existing actor. See [durable closed requests](CLOSED_TRANSITION.md).
 
 A separate bounded real-launcher trial passed: four protected workers were
 stable after warm-up, duplicate startup was rejected, a fixture Paused request
@@ -130,8 +133,10 @@ in this trial belongs only to its private fixture.
 
 ## Deployment still required
 
-The backend is not hooked into init or the HA mode selector. The next controller
-layer must coordinate selective firewall/old-flow quarantine, all vendor roles
+The backend is not hooked into init or the HA mode selector. A development
+[closed-transition engine](CLOSED_TRANSITION.md) now connects a durable fence to
+policy verification and tracked stop. Production integration must still
+coordinate selective firewall/old-flow quarantine, all vendor roles
 including diagnostics, DNS/time profile choice, telemetry/relay handling and
 boot ordering before publishing permits or reporting Lisa isolation. Independent
 root SSH recovery and unrelated applications' internet access must remain intact.

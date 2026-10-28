@@ -76,6 +76,16 @@ int main(int argc, char **argv) {
     gate_release(&lease);
     CHECK(gate_acquire(state, runtime, owner, NEXT_BOOT, &lease) == GATE_DENIED, "previous_boot_denied");
     CHECK(gate_acquire(state, runtime, owner, "invalid", &lease) == GATE_DENIED, "malformed_boot_denied");
+    CHECK(!replace(state,"closed.request","corrupt\n",8,0600) &&
+        mode_store_boot_choice(state,owner)==LISA_MODE_PAUSED &&
+        gate_acquire(state,runtime,owner,BOOT,&lease)==GATE_DENIED,"close_fence_blocks_stale_alice");
+    CHECK(gate_acquire_running(state,runtime,owner,BOOT,&lease)==GATE_GRANTED,
+        "pending_fence_does_not_stop_before_network_denial");
+    gate_release(&lease);
+    CHECK(!unlinkat(state,"closed.request",0) && !symlinkat("missing",state,"closed.request") &&
+        gate_acquire(state,runtime,owner,BOOT,&lease)==GATE_DENIED &&
+        mode_store_boot_choice(state,owner)==LISA_MODE_PAUSED && !unlinkat(state,"closed.request",0),
+        "unsafe_close_fence_also_denies_start");
     CHECK(!unlinkat(runtime, "vendor.permit", 0) &&
         gate_acquire(state, runtime, owner, BOOT, &lease) == GATE_DENIED, "revocation_denies_restart");
     const char *bad[] = {
@@ -120,7 +130,8 @@ cleanup:
     gate_release(&lease); gate_release(&second);
     if (held >= 0) close(held);
     if (runtime >= 0) { unlinkat(runtime, "vendor.permit", 0); unlinkat(runtime, "linked", 0); close(runtime); }
-    if (state >= 0) { unlinkat(state, "mode.state", 0); unlinkat(state, "mode.lock", 0); close(state); }
+    if (state >= 0) { unlinkat(state, "mode.state", 0); unlinkat(state, "mode.lock", 0);
+        unlinkat(state,"closed.request",0); close(state); }
     unlinkat(root, "run", AT_REMOVEDIR); unlinkat(root, "state", AT_REMOVEDIR); close(root);
     int removed = !rmdir(path);
     printf("{\"selftest\":\"service-gate\",\"checks\":%u,\"ok\":%s,\"temporary_directory_removed\":%s,"
