@@ -82,6 +82,10 @@ this backend is not installed into boot or exposed to HA mode controls yet.
 The [file/mapping queue audit](docs/RELAY_QUEUES.md) identifies shared-system-log
 ingress, retained descriptors and mapping-only holders. It keeps unresolved
 relay/queue requirements explicit and never deletes mixed device state.
+The [guarded collector epoch](docs/COLLECTOR_EPOCH.md) now excludes the shared
+system journal and provides private SQLite/log storage for a standalone gated
+collector. It passed a bounded real-code trial and remains separate from boot
+installation and HA mode controls.
 
 ## Development
 

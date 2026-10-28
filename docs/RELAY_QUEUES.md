@@ -100,3 +100,8 @@ The audit lists these actions but does not execute them. `production_plan_ready`
 `apply_supported`, `isolation_verified` and `mutation_performed` remain false.
 It preserves internet access for unrelated applications and changes no shared
 router or DHCP infrastructure.
+
+The separate [collector filesystem epoch](COLLECTOR_EPOCH.md) now implements
+shared-journal exclusion and a private SQLite/log lifecycle for a gated standalone
+collector. Its bounded real-code trial passed; it is not installed into boot or
+the HA mode selector and does not cover the separate telemetry daemon yet.

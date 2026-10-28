@@ -13,14 +13,17 @@
 #include "startup_guardian.h"
 #include "vendor_identity.h"
 #include "diagnostics_guard.h"
+#include "collector_guard.h"
 #include "closed_transition.h"
 #include "policy_check.h"
 
 #define VENDOR_GID 57342
 #define DIAGNOSTICS_GID 57343
+#define COLLECTOR_GID 57344
 static int lab;
 static unsigned selected_gid=VENDOR_GID;
 static char diagnostics_root[PATH_MAX];
+static char collector_root[PATH_MAX],collector_profile[PATH_MAX];
 
 static int secure_directory(const char *path) {
     if (*path!='/') return -1;
@@ -51,6 +54,7 @@ static int role_status(pid_t pid,int strict) {
     int gid=0,gid_seen=0,tagged=0,uid=0,seccomp=0,cap_fields=0,bad=0;
     unsigned long long mask=(1ull<<CAP_NET_ADMIN)|(1ull<<CAP_NET_RAW)|(1ull<<CAP_SYS_PTRACE);
     if(selected_gid==DIAGNOSTICS_GID) mask=diagnostics_forbidden_caps();
+    if(selected_gid==COLLECTOR_GID) mask=UINT64_MAX;
     while (fgets(line,sizeof(line),file)) {
         unsigned a,b,c,d; unsigned long long caps;
         if (sscanf(line,"Gid: %u %u %u %u",&a,&b,&c,&d)==4) {
@@ -105,6 +109,53 @@ static int actors_absent(const struct guardian_record *record) {
 }
 static int observe_quasar(pid_t pid) { return role_status(pid,1); }
 static int observe_diagnostics(pid_t pid) { return role_status(pid,1)||diagnostics_private_view(pid); }
+static int observe_collector(pid_t pid) { return role_status(pid,1)||collector_private_view(pid); }
+/* Match only the fixed role flag; never export argv or accept a caller's PID. */
+static int collector_process(pid_t pid) {
+    char path[64],exe[PATH_MAX],arguments[4096];
+    snprintf(path,sizeof(path),"/proc/%ld/exe",(long)pid);
+    ssize_t size=readlink(path,exe,sizeof(exe)-1);
+    if(size<0) return -1;
+    exe[size]=0; if(strcmp(exe,"/system/vendor/quasar/maind")) return 0;
+    snprintf(path,sizeof(path),"/proc/%ld/cmdline",(long)pid);
+    int file=open(path,O_RDONLY|O_CLOEXEC);
+    if(file<0) return -1;
+    size=read(file,arguments,sizeof(arguments)); close(file);
+    if(size<=0||size==(ssize_t)sizeof(arguments)||arguments[size-1]) return -1;
+    int matches=0;
+    for(ssize_t at=0;at<size;at+=(ssize_t)strlen(arguments+at)+1)
+        matches+=!strcmp(arguments+at,"--fluent-bitd");
+    return matches==1?1:matches?-1:0;
+}
+static int legacy_collector_clear(void) {
+    DIR *directory=opendir("/proc"); struct dirent *entry; int clear=1;
+    if(!directory) return 0;
+    for(;;) {
+        errno=0; entry=readdir(directory);
+        if(!entry) { if(errno) clear=0; break; }
+        char *end; long pid=strtol(entry->d_name,&end,10);
+        if(*end||pid<2||pid>INT_MAX) continue;
+        struct process_stamp stamp;
+        if(process_stamp((pid_t)pid,&stamp)||stamp.state=='Z'||stamp.state=='X') continue;
+        char path[64],exe[PATH_MAX]; snprintf(path,sizeof(path),"/proc/%ld/exe",pid);
+        ssize_t size=readlink(path,exe,sizeof(exe)-1);
+        if(size<0) continue;
+        exe[size]=0;
+        if(!strcmp(exe,"/system/vendor/quasar/maind")&&collector_process((pid_t)pid)!=0&&
+            (!lab||(stamp.state!='T'&&stamp.state!='t'))) clear=0;
+    }
+    closedir(directory); return clear;
+}
+static int prepare_collector(void) {
+    struct rlimit core={0,0},files={1024,1024};
+    if(!legacy_collector_clear()||clearenv()||setrlimit(RLIMIT_CORE,&core)||setrlimit(RLIMIT_NOFILE,&files)||
+        setenv("LD_LIBRARY_PATH","/system/vendor/quasar/libs",1)||
+        setenv("CA_CERTIFICATES","/system/vendor/quasar/ca-certificates.crt",1)||
+        setenv("PATH","/usr/sbin:/usr/bin:/sbin:/bin",1)||
+        collector_isolate(collector_root,collector_profile,"/system/vendor/quasar/maind")||
+        vendor_identity_prepare(COLLECTOR_GID)||collector_extra_guard()||chdir("/data/quasar")) return -1;
+    return 0;
+}
 
 static int legacy_clear(void) {
     DIR *directory=opendir("/proc");
@@ -202,11 +253,16 @@ int main(int argc,char **argv) {
     int diagnostics=!strcmp(action,"start-diagnostics")||!strcmp(action,"stop-diagnostics")||
         !strcmp(action,"reconcile-diagnostics")||!strcmp(action,"close-diagnostics")||!strcmp(action,"check-diagnostics-policy")||
         !strcmp(action,"inspect-diagnostics");
+    int collector=!strcmp(action,"start-collector")||!strcmp(action,"stop-collector")||
+        !strcmp(action,"reconcile-collector")||!strcmp(action,"close-collector")||
+        !strcmp(action,"check-collector-policy")||!strcmp(action,"inspect-collector");
     if (strcmp(action,"start-quasar") && strcmp(action,"stop-quasar") && strcmp(action,"reconcile-quasar") &&
         strcmp(action,"start-diagnostics") && strcmp(action,"stop-diagnostics") && strcmp(action,"reconcile-diagnostics") && strcmp(action,"inspect-diagnostics") &&
+        strcmp(action,"start-collector") && strcmp(action,"stop-collector") && strcmp(action,"reconcile-collector") && strcmp(action,"inspect-collector") &&
         (!lab || (strcmp(action,"request-paused") && strcmp(action,"close-quasar") && strcmp(action,"check-quasar-policy") &&
-        strcmp(action,"close-diagnostics") && strcmp(action,"check-diagnostics-policy")))) return 2;
-    selected_gid=diagnostics?DIAGNOSTICS_GID:VENDOR_GID;
+        strcmp(action,"close-diagnostics") && strcmp(action,"check-diagnostics-policy") &&
+        strcmp(action,"close-collector") && strcmp(action,"check-collector-policy")))) return 2;
+    selected_gid=collector?COLLECTOR_GID:diagnostics?DIAGNOSTICS_GID:VENDOR_GID;
     int fd=open("/proc/device-tree/compatible",O_RDONLY|O_CLOEXEC);
     char compatible[512]; ssize_t size=fd>=0?read(fd,compatible,sizeof(compatible)):-1;
     if(fd>=0) close(fd);
@@ -231,9 +287,13 @@ int main(int argc,char **argv) {
         snprintf(state_path,sizeof(state_path),"%s/state",argv[2]);
         snprintf(runtime_path,sizeof(runtime_path),"%s/run",argv[2]);
         snprintf(diagnostics_root,sizeof(diagnostics_root),"%s/diagnostics-root",argv[2]);
+        snprintf(collector_root,sizeof(collector_root),"%s/collector-root",argv[2]);
+        snprintf(collector_profile,sizeof(collector_profile),"%s/collector-profile.json",argv[2]);
     } else {
         strcpy(state_path,"/bkupgrade/data/opt/lisa-station/state"); strcpy(runtime_path,"/run/lisa-station");
         strcpy(diagnostics_root,"/bkupgrade/data/opt/lisa-station/diagnostics-root");
+        strcpy(collector_root,"/bkupgrade/data/opt/lisa-station/collector-root");
+        strcpy(collector_profile,"/bkupgrade/data/opt/lisa-station/collector-profile.json");
     }
     int state=secure_directory(state_path),runtime=secure_directory(runtime_path);
     enum guardian_result result=GUARD_DENIED; struct guardian_started started={0};
@@ -242,6 +302,7 @@ int main(int argc,char **argv) {
     char *const args[]={"quasar_launcher2","/system/vendor/quasar/launch.json",NULL};
     char *const diagnostics_args[]={"alsa-audio-monitord","/etc/alsa-audio-diagnostics/devices/yandexmidi.json",
         "/etc/alsa-audio-diagnostics.conf",NULL};
+    char *const collector_args[]={"maind","--fluent-bitd",NULL};
     struct guardian_spec spec={.role="quasar",.executable="/system/vendor/quasar/quasar_launcher2",.argv=args,
         .prepare=prepare_quasar,.observe=observe_quasar,.actors_absent=actors_absent,.maximum_seconds=lab?50:0};
     if(diagnostics) {
@@ -249,36 +310,42 @@ int main(int argc,char **argv) {
         spec.prepare=prepare_diagnostics; spec.maximum_seconds=lab?20:0;
         spec.observe=observe_diagnostics;
     }
+    if(collector) {
+        spec.role="collector"; spec.executable="/system/vendor/quasar/maind"; spec.argv=collector_args;
+        spec.prepare=prepare_collector; spec.observe=observe_collector; spec.maximum_seconds=lab?30:0;
+    }
     if(state>=0&&runtime>=0) {
-        if(!strcmp(action,"start-quasar")||!strcmp(action,"start-diagnostics")) {
-            int jail=diagnostics?secure_directory(diagnostics_root):-1;
-            if(diagnostics && jail<0) result=GUARD_DENIED;
-            else if(!(diagnostics?legacy_diagnostics_clear():legacy_clear())||!actors_absent(NULL)) result=GUARD_BUSY;
+        if(!strcmp(action,"start-quasar")||!strcmp(action,"start-diagnostics")||!strcmp(action,"start-collector")) {
+            int jail=collector?secure_directory(collector_root):diagnostics?secure_directory(diagnostics_root):-1;
+            if(((diagnostics||collector)&&jail<0)||(collector&&!collector_profile_valid(collector_profile))) result=GUARD_DENIED;
+            else if(!(collector?legacy_collector_clear():diagnostics?legacy_diagnostics_clear():legacy_clear())||!actors_absent(NULL)) result=GUARD_BUSY;
             else result=guardian_start(state,runtime,0,boot,&spec,&started);
             if(jail>=0) close(jail);
-        } else if(!strcmp(action,"stop-quasar")||!strcmp(action,"stop-diagnostics")) result=guardian_stop(runtime,0,boot,&spec);
-        else if(!strcmp(action,"reconcile-quasar")||!strcmp(action,"reconcile-diagnostics")) result=guardian_reconcile_closed(state,runtime,0,boot,&spec);
-        else if(!strcmp(action,"inspect-diagnostics")) {
+        } else if(!strcmp(action,"stop-quasar")||!strcmp(action,"stop-diagnostics")||!strcmp(action,"stop-collector")) result=guardian_stop(runtime,0,boot,&spec);
+        else if(!strcmp(action,"reconcile-quasar")||!strcmp(action,"reconcile-diagnostics")||!strcmp(action,"reconcile-collector")) result=guardian_reconcile_closed(state,runtime,0,boot,&spec);
+        else if(!strcmp(action,"inspect-diagnostics")||!strcmp(action,"inspect-collector")) {
             struct guardian_record record; struct gate_lease lease={-1,0};
-            if(!guardian_read(runtime,0,"diagnostics.child",&record)&&record.phase==G_RUNNING&&!strcmp(record.boot,boot)) {
+            if(!guardian_read(runtime,0,collector?"collector.child":"diagnostics.child",&record)&&record.phase==G_RUNNING&&!strcmp(record.boot,boot)) {
                 started.record=record;
                 diagnostics_live=process_live(record.child,record.child_ticks);
                 if(diagnostics_live) {
                     diagnostics_identity=!role_status(record.child,1);
-                    diagnostics_view=!diagnostics_private_view(record.child);
-                    diagnostics_bus=diagnostics_unix_connected(record.child);
+                    diagnostics_view=!(collector?collector_private_view(record.child):diagnostics_private_view(record.child));
+                    diagnostics_bus=collector?collector_runtime_private(record.child):diagnostics_unix_connected(record.child);
                 }
                 if(diagnostics_live&&diagnostics_identity&&diagnostics_view&&diagnostics_bus&&
-                    gate_acquire_running(state,runtime,0,boot,&lease)==GATE_GRANTED&&lease.revision==record.revision) result=GUARD_OK;
+                    gate_acquire_running(state,runtime,0,boot,&lease)==GATE_GRANTED&&lease.revision==record.revision&&
+                    process_live(record.child,record.child_ticks)) result=GUARD_OK;
             }
             gate_release(&lease);
         }
         else if(!strcmp(action,"close-quasar") || !strcmp(action,"check-quasar-policy") ||
-            !strcmp(action,"close-diagnostics") || !strcmp(action,"check-diagnostics-policy")) {
+            !strcmp(action,"close-diagnostics") || !strcmp(action,"check-diagnostics-policy") ||
+            !strcmp(action,"close-collector") || !strcmp(action,"check-collector-policy")) {
             struct mode_record current; struct close_record pending;
             struct close_quasar_context context={.state=state,.runtime=runtime,.boot=boot,.spec=&spec};
             context.policy_valid=!policy_chain_read(runtime,0,context.chain,sizeof(context.chain));
-            if(!strcmp(action,"check-quasar-policy")||!strcmp(action,"check-diagnostics-policy")) {
+            if(!strcmp(action,"check-quasar-policy")||!strcmp(action,"check-diagnostics-policy")||!strcmp(action,"check-collector-policy")) {
                 result=deny_quasar(&context)?GUARD_FAILED:GUARD_OK;
                 if(result==GUARD_OK) {
                     control4=policy_control_socket(AF_INET); control6=policy_control_socket(AF_INET6);
@@ -308,10 +375,11 @@ int main(int argc,char **argv) {
     const char *phase=state>=0&&!close_read(state,0,&closed_record)?close_phase_name(closed_record.phase):"none";
     printf("{\"event\":\"station-service\",\"operation\":\"%s\",\"result\":\"%s\",\"guardian_pid\":%ld,"
         "\"child_pid\":%ld,\"revision\":%" PRIu64 ",\"transition_phase\":\"%s\",\"diagnostics_jail_verified\":%s,"
-        "\"isolation_verified\":false}\n",action,names[result],
+        "\"collector_jail_verified\":%s,\"isolation_verified\":false}\n",action,names[result],
         (long)started.record.guardian,(long)started.record.child,started.record.revision,phase,
-        diagnostics&&result==GUARD_OK&&(!strcmp(action,"start-diagnostics")||!strcmp(action,"inspect-diagnostics"))?"true":"false");
-    if((!strcmp(action,"check-quasar-policy")||!strcmp(action,"check-diagnostics-policy")) && result==GUARD_OK)
+        diagnostics&&result==GUARD_OK&&(!strcmp(action,"start-diagnostics")||!strcmp(action,"inspect-diagnostics"))?"true":"false",
+        collector&&result==GUARD_OK&&(!strcmp(action,"start-collector")||!strcmp(action,"inspect-collector"))?"true":"false");
+    if((!strcmp(action,"check-quasar-policy")||!strcmp(action,"check-diagnostics-policy")||!strcmp(action,"check-collector-policy")) && result==GUARD_OK)
         printf("{\"event\":\"policy-controls\",\"ipv4\":%s,\"ipv6\":%s}\n",control4?"true":"false",control6?"true":"false");
     if(state>=0) close(state);
     if(runtime>=0) close(runtime);

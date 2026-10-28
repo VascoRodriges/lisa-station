@@ -7,7 +7,7 @@ This roadmap distinguishes shipped code from acceptance targets.
 | Phase | Deliverable | Acceptance | Status |
 |---|---|---|---|
 | 1 | Status controller, pinned transport, UI setup and diagnostic entities | Real device status; incompatible data rejected; offline state safe; no false privacy claim | v0.1.0 |
-| 2 | Speaker-local vendor isolation | Cover senders outside the main launcher, descendants, old sockets, local relays, DNS, IPv4/IPv6 and telemetry queues; other applications retain internet | File/mapping queue audit now identifies shared-system-log ingress and retained holders; guarded diagnostics, live TCP audit, durable exact-flow recovery and independent profiles qualified; UDP, relay/queue enforcement and production policy pending |
+| 2 | Speaker-local vendor isolation | Cover senders outside the main launcher, descendants, old sockets, local relays, DNS, IPv4/IPv6 and telemetry queues; other applications retain internet | Gated collector now excludes the shared journal and uses private SQLite/log storage in a bounded real-code trial; diagnostics, file/mapping and TCP audits, exact-flow recovery and independent profiles qualified; telemetry/IPC/UDP/boot composition pending |
 | 3 | Persistent mode controller | Alice / Lisa / Paused, serialized transitions, verified actual state, boot enforcement before vendor startup, fail closed, explicit return to Alice | Durable close engine: 65 transaction, 34 admission and 54 guardian checks passed; scoped quasar policy/stop trial implemented; production callbacks, boot gates and Alice return pending |
 | 4 | Permanent speech service | No workstation dependency; local KWS, standalone VQE, target-speaker extraction on a server, Assist through response playback, physical mute honored | Bounded research prototype exists outside this release |
 | 5 | Assist satellite and voice settings | Pipeline choice, listening/processing/responding states, LED feedback, measured latency and recovery | Planned |
@@ -66,3 +66,6 @@ dependencies remain explicit relays; boot installation and full isolation are pe
 The [queue/holder audit](RELAY_QUEUES.md) now retains unlinked and mapping-only
 objects and identifies system-log ingress. It supplies metadata and transition
 requirements; it does not purge device state or authorize a closed mode.
+The [collector epoch](COLLECTOR_EPOCH.md) now enforces a separate filesystem
+view and queue lifecycle for the standalone log collector, with fixed admission
+and close behavior. Production boot/mode composition is still pending.
