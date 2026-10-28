@@ -11,9 +11,9 @@ static inline int collector_profile_valid(const char *path) {
     return !lstat(path,&info)&&S_ISREG(info.st_mode)&&info.st_uid==0&&info.st_nlink==1&&
         (info.st_mode&07777)==0600&&info.st_size>0&&info.st_size<=1024*1024;
 }
-static inline int collector_isolate(const char *root,const char *profile,const char *executable) {
+static inline int collector_isolate_as(const char *root,const char *profile,const char *executable,gid_t group) {
     struct stat info; char target[PATH_MAX];
-    if(lstat(root,&info)||!S_ISDIR(info.st_mode)||info.st_uid||(info.st_mode&0077)||
+    if((group!=57344&&group!=57345)||lstat(root,&info)||!S_ISDIR(info.st_mode)||info.st_uid||(info.st_mode&0077)||
         !collector_profile_valid(profile)||unshare(CLONE_NEWNS)||mount(NULL,"/",NULL,MS_REC|MS_PRIVATE,NULL)||
         mount("tmpfs",root,"tmpfs",MS_NOSUID|MS_NODEV,"size=2m,mode=755")) return -1;
     const char *directories[]={"/lib","/usr","/usr/lib","/system","/system/vendor","/system/vendor/quasar",
@@ -21,8 +21,10 @@ static inline int collector_isolate(const char *root,const char *profile,const c
         "/proc","/proc/sys","/proc/sys/kernel","/proc/sys/kernel/random"};
     for(unsigned i=0;i<sizeof(directories)/sizeof(directories[0]);++i)
         if(diagnostics_directory(root,directories[i])) return -1;
-    if(diagnostics_text(root,"/etc/passwd","root:*:0:57344:Collector:/:/nonexistent\n")||
-        diagnostics_text(root,"/etc/group","root:*:0:\nlisa-collector:*:57344:\n")||
+    char passwd[128],groups[128];
+    snprintf(passwd,sizeof(passwd),"root:*:0:%u:Epoch:/:/nonexistent\n",(unsigned)group);
+    snprintf(groups,sizeof(groups),"root:*:0:\nlisa-%s:*:%u:\n",group==57344?"collector":"telemetry",(unsigned)group);
+    if(diagnostics_text(root,"/etc/passwd",passwd)||diagnostics_text(root,"/etc/group",groups)||
         diagnostics_text(root,"/etc/nsswitch.conf","passwd: files\ngroup: files\nhosts: files dns\n")) return -1;
     if(diagnostics_bind(root,"/lib","/lib",0,0)||diagnostics_bind(root,"/usr/lib","/usr/lib",0,0)||
         diagnostics_bind(root,"/system/vendor/quasar","/system/vendor/quasar",0,0)||
@@ -50,6 +52,9 @@ static inline int collector_isolate(const char *root,const char *profile,const c
         snprintf(target,sizeof(target),"%s/var/log",root)>=(int)sizeof(target)||symlink("../tmp",target)||
         mount(NULL,root,NULL,MS_REMOUNT|MS_RDONLY|MS_NOSUID|MS_NODEV,NULL)||chroot(root)||chdir("/")) return -1;
     return 0;
+}
+static inline int collector_isolate(const char *root,const char *profile,const char *executable) {
+    return collector_isolate_as(root,profile,executable,57344);
 }
 static inline int collector_extra_guard(void) {
     struct __user_cap_header_struct header={_LINUX_CAPABILITY_VERSION_3,0};

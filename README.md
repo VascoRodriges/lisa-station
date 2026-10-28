@@ -86,6 +86,9 @@ The [guarded collector epoch](docs/COLLECTOR_EPOCH.md) now excludes the shared
 system journal and provides private SQLite/log storage for a standalone gated
 collector. It passed a bounded real-code trial and remains separate from boot
 installation and HA mode controls.
+The [telemetry storage boundary](docs/TELEMETRY_EPOCH.md) also separates LMDB,
+working sessions and batch paths. Its real-code lifecycle is observed, while
+real SDK batch materialization remains an explicit failed acceptance criterion.
 
 ## Development
 

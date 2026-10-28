@@ -16,7 +16,7 @@ from controller.qualify_socket_close import rules_only
 SCRIPT = r"""
 set -eu
 umask 077
-collectors() {
+role_processes() {
     for process in $(pidof maind || :); do
         state=$(awk '{print $3}' "/proc/$process/stat" 2>/dev/null) || continue
         case "$state" in ''|Z|X) continue;; esac
@@ -34,7 +34,7 @@ tagged() {
 [ "$(id -u)" = 0 ]
 command -v flock >/dev/null
 [ -z "$(tagged)" ]
-original=$(collectors); parent=$(pidof quasar_launcher2)
+original=$(role_processes); parent=$(pidof quasar_launcher2)
 [ "$(echo "$original" | wc -w)" = 1 ] && [ "$(echo "$parent" | wc -w)" = 1 ]
 [ "$(awk '{print $4}' "/proc/$original/stat")" = "$parent" ]
 [ "$(awk '{print $3}' "/proc/$original/stat")" != T ]
@@ -122,6 +122,10 @@ code=0
 PROBE --lab-start-collector "$CANON" > "$STATE/duplicate.json" || code=$?
 [ "$code" != 0 ] && grep -q '"result":"busy"' "$STATE/duplicate.json"
 cat "$STATE/duplicate.json"
+tries=0
+while ! PROBE --lab-inspect-collector "$CANON" > "$STATE/readiness.json"; do
+    [ "$tries" -lt 15 ] || exit 8; sleep 1; tries=$((tries+1))
+done
 for sample in 1 2 3; do sleep 2; PROBE --lab-inspect-collector "$CANON"; done
 printf '%s\n' "$CHAIN" > "$STATE/run/policy.chain"
 iptables -D "$CHAIN" -m owner --gid-owner 57344 -d 127.0.0.0/8 -j RETURN
@@ -146,7 +150,7 @@ PROBE --lab-start-collector "$CANON" > "$STATE/denied.json" || code=$?
 [ "$code" != 0 ] && grep -q '"result":"denied"' "$STATE/denied.json"
 cat "$STATE/denied.json"
 restore
-[ "$(collectors)" = "$original" ]
+[ "$(role_processes)" = "$original" ]
 [ "$(awk '{print $3}' "/proc/$original/stat")" != T ]
 [ "$(awk '{print $3}' "/proc/$parent/stat")" != T ]
 [ -z "$(ls -A "$STATE/collector-root")" ]
@@ -195,14 +199,11 @@ def evaluate_events(events):
     )
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("host")
-    parser.add_argument("--ssh-config", type=Path)
-    parser.add_argument("--allow-temporary-collector-freeze", action="store_true", required=True)
-    args = parser.parse_args()
+def run_trial(args, role, script, profile_factory, event_evaluator, boundary_evaluator=None):
+    if role not in {"collector", "telemetry"}:
+        raise ValueError("unsupported epoch role")
     if args.host.startswith("-"):
-        parser.error("host must be an SSH alias")
+        raise ValueError("host must be an SSH alias")
     root = Path(__file__).resolve().parents[1]
     ssh = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=20", "-o", "ServerAliveInterval=8"]
     if args.ssh_config:
@@ -217,12 +218,12 @@ def main():
     before = remote(identity, check=True).stdout
     firewall = remote("iptables-save; ip6tables-save", check=True).stdout
     stock = json.loads(remote("cat /system/vendor/quasar/quasar.cfg", check=True).stdout)
-    profile = json.dumps(prepare_collector_profile(stock, lab_clone=True), separators=(",", ":")).encode()
+    profile = json.dumps(profile_factory(stock, lab_clone=True), separators=(",", ":")).encode()
     binary = (root / "build/station-service.armhf").read_bytes()
     digest = hashlib.sha256(binary).hexdigest()
     profile_digest = hashlib.sha256(profile).hexdigest()
     target = "/data/opt/lisa-controller-lab/station-service-" + digest[:16]
-    profile_target = "/data/opt/lisa-controller-lab/collector-profile-" + profile_digest[:16]
+    profile_target = "/data/opt/lisa-controller-lab/" + role + "-profile-" + profile_digest[:16]
     for path, payload, mode in ((target, binary, "700"), (profile_target, profile, "600")):
         remote(
             "umask 077; cat > " + path + ".new && chmod " + mode + " " + path + ".new",
@@ -233,23 +234,23 @@ def main():
             remote("sha256sum " + path + ".new", check=True).stdout.decode().split()[0]
             != hashlib.sha256(payload).hexdigest()
         ):
-            raise RuntimeError("collector artifact digest mismatch")
+            raise RuntimeError(role + " artifact digest mismatch")
         remote("mv " + path + ".new " + path, check=True)
-    default = remote(target + " --start-collector")
+    default = remote(target + " --start-" + role)
     denied = default.returncode != 0 and json.loads(default.stdout).get("result") == "denied"
     if not denied:
-        raise RuntimeError("uninstalled collector start did not deny")
+        raise RuntimeError("uninstalled " + role + " start did not deny")
     result = remote(
-        "sh -s", input=SCRIPT.replace("PROBE", target).replace("PROFILE", profile_target).encode()
+        "sh -s", input=script.replace("PROBE", target).replace("PROFILE", profile_target).encode()
     )
     after = remote(identity, check=True).stdout
     firewall_after = remote("iptables-save; ip6tables-save", check=True).stdout
     restored_check = (
-        SCRIPT.split('[ "$(id -u)" = 0 ]', 1)[0]
+        script.split('[ "$(id -u)" = 0 ]', 1)[0]
         + r"""
 test ! -e /data/opt/lisa-lab/trial.lock
 test -z "$(tagged)"
-original=$(collectors); parent=$(pidof quasar_launcher2)
+original=$(role_processes); parent=$(pidof quasar_launcher2)
 [ "$(echo "$original" | wc -w)" = 1 ] && [ "$(echo "$parent" | wc -w)" = 1 ]
 for process in "$original" "$parent"; do
     case "$(awk '{print $3}' "/proc/$process/stat")" in R|S) :;; *) exit 9;; esac
@@ -265,7 +266,7 @@ done
         profile_sha256=profile_digest,
         returncode=result.returncode,
         events=events,
-        qualified=result.returncode == 0 and evaluate_events(events),
+        qualified=result.returncode == 0 and event_evaluator(events),
         stock_process_boot_and_config_unchanged=before == after,
         firewall_rules_restored=rules_only(firewall) == rules_only(firewall_after),
         default_production_start_denied=denied,
@@ -275,7 +276,16 @@ done
         isolation_verified=False,
         error=result.stderr.decode(errors="replace")[-2000:],
     )
-    (root / "build/collector-qualification.json").write_text(
+    if role == "telemetry":
+        report["storage_boundary_qualified"] = result.returncode == 0 and bool(
+            boundary_evaluator and boundary_evaluator(events)
+        )
+        report["batch_materialized"] = any(
+            row.get("telemetry_batch_materialized") is True
+            or (row.get("event") == "telemetry-epoch-closed" and row.get("batch_materialized") is True)
+            for row in events
+        )
+    (root / "build" / (role + "-qualification.json")).write_text(
         json.dumps(report, indent=2) + "\n", encoding="utf-8"
     )
     print(json.dumps({k: v for k, v in report.items() if k != "events"}, indent=2))
@@ -285,7 +295,15 @@ done
         and report["firewall_rules_restored"]
         and report["stock_processes_resumed"]
     ):
-        raise SystemExit("collector qualification failed; inspect private report")
+        raise SystemExit(role + " qualification failed; inspect private report")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("host")
+    parser.add_argument("--ssh-config", type=Path)
+    parser.add_argument("--allow-temporary-collector-freeze", action="store_true", required=True)
+    run_trial(parser.parse_args(), "collector", SCRIPT, prepare_collector_profile, evaluate_events)
 
 
 if __name__ == "__main__":
