@@ -58,9 +58,10 @@ Music Assistant output, timers and alarms are **not implemented in v0.1.0**.
 Development notes: [feature migration matrix](docs/FEATURE_PARITY.md) and
 [speaker-local isolation design](docs/ISOLATION_DESIGN.md). Experimental kernel
 qualification tools are separate from the diagnostic integration's commands.
-The development branch includes scoped packet filtering, exact TCP closure and
-passive connection ownership qualification tools. These do not enable mode
-switching or change the released v0.1.0 feature set.
+The development tree includes scoped packet filtering, exact TCP closure,
+post-close kernel reply/UDP quarantine and passive connection ownership tools.
+These do not enable mode switching or change the released v0.1.0 feature set.
+The planned policy targets Yandex services; unrelated applications retain internet access.
 
 ## Development
 

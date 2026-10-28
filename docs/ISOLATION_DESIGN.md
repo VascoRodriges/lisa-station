@@ -21,6 +21,11 @@ The speaker has neither a usable network namespace nor a network cgroup. Vendor
 services share root with administration, so blocking UID 0 would affect unrelated
 software. DNS blocklists alone are not an isolation mechanism.
 
+The scope is **Yandex services and their traffic**, not an internet cutoff for
+the device. HA, NAS, administration and unrelated applications retain their
+network access. There is no blanket device/UID-0 DROP policy, vendor-IP blocklist
+as the primary defense, or shared router/DHCP change.
+
 ## Candidate: socket group ownership plus a locked process identity
 
 The kernel supports `xt_owner --gid-owner` for IPv4 and IPv6. A process launched
@@ -191,3 +196,57 @@ descriptor sharing, local relays and already-queued packets before claiming that
 old group-0 traffic is contained. No live vendor connection has been closed by
 these tools, and neither tool changes the diagnostic HA entity's unknown privacy
 state.
+
+## Exact-flow quarantine and post-close kernel replies
+
+`flow-quarantine-probe` and `qualify_flow_quarantine.py` passed **54 native checks**
+on the verified speaker. All fixtures are ephemeral loopback connections created
+as root/group 0 by the test; no real vendor connection is closed or filtered.
+The private chains match the fixture's protocol, local/remote addresses and both
+ports. They do not depend on the current process/socket owner to decide denial.
+
+For TCP, the driver installs the exact outgoing-flow rule before cookie-qualified
+destruction. The peer does not receive the reset, while a separate control
+connection continues to deliver data. After the original descriptor is closed,
+the probe confirms the old cookie is absent and sends a late packet from the
+peer to that closed endpoint. The kernel's reply is counted and blocked. When
+the test rule is removed, a further peer packet receives the expected reset;
+the unrelated connection still works.
+
+There is a relevant IPv4/IPv6 distinction. The actual IPv4 and mapped-IPv4 tests
+count post-close replies with `--socket-exists`; pure IPv6 counts them without
+an associated socket. `--socket-exists` is **not proof of application ownership**.
+Linux 4.9's [IPv4 TCP reset path](https://github.com/torvalds/linux/blob/v4.9/net/ipv4/tcp_ipv4.c)
+uses the kernel's per-CPU control socket. The
+[owner matcher](https://github.com/torvalds/linux/blob/v4.9/net/netfilter/xt_owner.c)
+checks socket association separately from UID/GID credentials. The report keeps
+the two counter categories separate and requires the observed family-specific
+increase after the late packet. This is why owner-only filtering is insufficient
+for post-close kernel traffic.
+
+For UDP, sockets are deliberately unconnected and created before quarantine.
+The test separately verifies exact-flow INPUT and OUTPUT denial, the matching
+packet counters, uninterrupted UDP control delivery and recovery after removing
+the rules. IPv4, IPv6 and IPv4-mapped IPv6 are covered for both transports.
+
+```sh
+python controller/build.py --target flow-quarantine-probe
+python -m controller.qualify_flow_quarantine YOUR_SPEAKER_SSH_ALIAS \
+  --ssh-config YOUR_SSH_CONFIG --apply-temporary-exact-loopback-rules \
+  --exercise-watchdog
+```
+
+The opt-in watchdog exercise kills the remote test shell with SIGKILL immediately
+after installing the first hook. Shell exit traps cannot perform cleanup in
+this case. The independent watchdog was verified to remove the private hooks,
+chains and test lock. Both normal and fault trials compare pre/post firewall
+rules and stock process/boot identities. Reports and firewall backups remain in
+ignored `build/`. The HA restricted key cannot invoke this administrative tool.
+
+These results qualify the mechanism, not production switching. They do not
+establish a complete vendor-flow inventory, handle ambiguous UDP ownership,
+audit local relays, quarantine application queues, or recall packets which have
+already passed the output hook. The production transition still needs an
+explicit completion barrier for previously queued traffic and safe persistence
+of quarantined tuples. Test cleanup deliberately restores the initial state;
+a production Lisa-mode failure must instead retain the closed vendor policy.

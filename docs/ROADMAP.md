@@ -7,7 +7,7 @@ This roadmap distinguishes shipped code from acceptance targets.
 | Phase | Deliverable | Acceptance | Status |
 |---|---|---|---|
 | 1 | Status controller, pinned transport, UI setup and diagnostic entities | Real device status; incompatible data rejected; offline state safe; no false privacy claim | v0.1.0 |
-| 2 | Speaker-local vendor isolation | Cover senders outside the main launcher, descendants, old sockets, local relays, DNS, IPv4/IPv6 and telemetry queues; other applications retain internet | 32 scoped filtering checks, 27 exact TCP closure checks and bounded stock-startup/voice compatibility passed; passive ownership audit added; whole-device policy not installed |
+| 2 | Speaker-local vendor isolation | Cover senders outside the main launcher, descendants, old sockets, local relays, DNS, IPv4/IPv6 and telemetry queues; other applications retain internet | 32 ownership-filter checks, 27 TCP closure checks, 54 exact-flow/kernel-reply checks and abrupt-exit cleanup passed; passive audit and stock-startup/voice compatibility verified; production policy not installed |
 | 3 | Persistent mode controller | Alice / Lisa / Paused, serialized transitions, verified actual state, boot enforcement before vendor startup, fail closed, explicit return to Alice | Intent storage primitive: 27 checks passed on device; boot gates and actual transition executor pending |
 | 4 | Permanent speech service | No workstation dependency; local KWS, standalone VQE, target-speaker extraction on a server, Assist through response playback, physical mute honored | Bounded research prototype exists outside this release |
 | 5 | Assist satellite and voice settings | Pipeline choice, listening/processing/responding states, LED feedback, measured latency and recovery | Planned |
@@ -25,6 +25,7 @@ This roadmap distinguishes shipped code from acceptance targets.
 - Privacy cannot be inferred merely from zero vendor processes or a successful
   isolated-process seccomp test.
 - Hardware microphone mute is respected, not bypassed.
+- Deny Yandex services and their flows; keep internet access for unrelated device applications.
 - Existing OTA protection and recovery access survive every migration.
 - No continuous audio or transcript history is saved by default.
 - Diagnostics omit secrets, speech and private network configuration.
