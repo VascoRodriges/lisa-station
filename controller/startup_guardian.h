@@ -239,7 +239,7 @@ static inline void guardian_child(const struct guardian_spec *spec, pid_t parent
     if (read(go, &ready, 1) != 1 || ready != 'G' || getppid() != parent) _exit(73);
     close(go);
     execv(spec->executable, spec->argv);
-    (void)write(report, "F", 1);
+    if(write(report,"F",1)!=1) _exit(78);
     _exit(74);
 }
 
@@ -332,11 +332,16 @@ finish:
     int saved = record->guardian > 1 && !guardian_save(runtime, owner, record_name, record);
     if (control >= 0) close(control);
     if (bound) unlinkat(runtime,socket_name,0);
-    if (stop_client >= 0) { (void)send(stop_client, saved && absent && !teardown ? "S" : "F", 1, MSG_NOSIGNAL); close(stop_client); }
+    if (stop_client >= 0) {
+        if(send(stop_client,saved&&absent&&!teardown?"S":"F",1,MSG_NOSIGNAL)!=1) saved=0;
+        close(stop_client);
+    }
     for (unsigned i=0; i<2; ++i) { if (setup[i]>=0) close(setup[i]); if (go[i]>=0) close(go[i]); }
     gate_release(lease);
     if (!announced && notify >= 0) {
-        response.result=GUARD_FAILED; (void)write(notify, &response, sizeof(response)); close(notify);
+        response.result=GUARD_FAILED;
+        if(write(notify,&response,sizeof(response))!=sizeof(response)) saved=0;
+        close(notify);
     }
     close(role_lock);
     _exit(saved ? 0 : 76);

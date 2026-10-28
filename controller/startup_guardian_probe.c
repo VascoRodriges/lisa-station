@@ -88,11 +88,13 @@ static pid_t contender(int state,int runtime,uid_t owner,uint64_t revision,int r
                 if (process_stamp(record.guardian,&stamp) || stamp.parent!=getppid()) _exit(12);
                 /* A sibling which our common parent has not reaped; PID pinned. */
                 if (kill(record.guardian,SIGKILL)) _exit(13);
-                (void)write(report,"K",1); _exit(0);
+                if(write(report,"K",1)!=1) _exit(16);
+                _exit(0);
             }
             struct mode_record next;
             char result=mode_store_request(state,owner,revision,LISA_MODE_PAUSED,&next)==STORE_BUSY ? 'B' : 'F';
-            (void)write(report,&result,1); _exit(result=='B'?0:14);
+            if(write(report,&result,1)!=1) _exit(16);
+            _exit(result=='B'?0:14);
         }
         struct timespec delay={0,10000000}; nanosleep(&delay,NULL);
     }

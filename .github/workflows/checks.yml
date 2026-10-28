@@ -44,7 +44,7 @@ jobs:
           ./build/mode-store-host
           cc -O2 -Wall -Wextra -Werror controller/service_gate_probe.c -o build/service-gate-host
           ./build/service-gate-host
-          cc -O2 -Wall -Wextra -Werror controller/startup_guardian_probe.c -o build/startup-guardian-host
+          cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/startup_guardian_probe.c -o build/startup-guardian-host
           ./build/startup-guardian-host
       - uses: actions/upload-artifact@v7.0.2
         with:
