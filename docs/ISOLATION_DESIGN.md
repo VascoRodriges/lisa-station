@@ -72,8 +72,8 @@ ignored `build/` directory. Do not publish a real firewall snapshot.
 
 ## Work required before production mode switching
 
-1. Qualify filtering of both new and already-open sockets, including IPv6 and
-   unaffected root controls; separately audit orphaned TCP packets and local relays.
+1. Keep the qualified new/already-open socket checks as regression tests;
+   separately qualify exact-flow quarantine, orphaned TCP packets and local relays.
 2. Inventory existing group-0 vendor connections during first migration. Close
    or quarantine their exact flows; do not claim that new-socket tagging covers them.
 3. Validate stock startup under the restricted identity, with a bounded rollback.
@@ -125,3 +125,69 @@ python controller/qualify_vendor_startup.py YOUR_SPEAKER_SSH_ALIAS \
 The optional `--observe-seconds 60 --live-observation` prints a technical readiness
 event for a coordinated voice check. It does not record audio. Real reports and
 configuration backups remain in ignored `build/`, not in the public source tree.
+
+## Closing connections from before the identity migration
+
+The kernel supports `INET_DIAG_DESTROY`. `socket_diag.h` implements bounded,
+exact-tuple TCP lookup and cookie-qualified `SOCK_DESTROY` requests. A kernel
+cookie distinguishes a particular socket from a later connection reusing its
+tuple. Destruction without a cookie is rejected locally. Netlink replies must
+come from the kernel, match the request sequence and fit one bounded message.
+Unexpected, truncated or multipart responses fail closed.
+
+The administrative `socket-close-probe` passed **27 checks on the speaker** across
+IPv4, IPv6 and IPv4-mapped IPv6. It first matches a socket it created against its
+own file descriptor's inode. It checks missing/wrong cookies, rejection after
+dropping network administration capabilities, actual closure at both endpoints,
+rejection of a repeated stale request and survival of an unrelated connection.
+Only its own ephemeral loopback sockets are destroyed. Vendor processes,
+firewall rules and the microphone are not changed.
+
+```sh
+python controller/build.py --target socket-close-probe
+python controller/qualify_socket_close.py YOUR_SPEAKER_SSH_ALIAS \
+  --ssh-config YOUR_SSH_CONFIG --run-own-loopback-selftest
+```
+
+This primitive is not wired into a mode transition. Closing a TCP socket can
+generate a reset packet. A production transition must install exact-flow
+quarantine **before** destruction, including kernel-generated packets without an
+owning process, and verify that queued traffic cannot escape. UDP requires a
+separate policy; TCP destruction does not close UDP or erase conntrack state.
+
+The UAPI and error behavior were checked against the
+[sock_diag documentation](https://man7.org/linux/man-pages/man7/sock_diag.7.html),
+Linux 4.9 [TCP diagnostic handler](https://github.com/torvalds/linux/blob/v4.9/net/ipv4/tcp_diag.c),
+[socket permissions](https://github.com/torvalds/linux/blob/v4.9/net/core/sock_diag.c)
+and [exact lookup](https://github.com/torvalds/linux/blob/v4.9/net/ipv4/inet_diag.c).
+That kernel maps a cookie mismatch to `ENOENT`; the test also accepts `ESTALE`.
+
+## Passive ownership inventory
+
+`inventory_connections.py` reads process executable identities/start times,
+socket descriptor inodes, IPv4/IPv6 TCP/UDP tables and conntrack tuples. It does
+not read payloads, command lines or process environments. Known roles include
+the main vendor workers/launcher, other vendor executables, audio diagnostics,
+DNS and time services. Other processes are retained as an explicit separate role.
+
+```sh
+python controller/inventory_connections.py YOUR_SPEAKER_SSH_ALIAS \
+  --ssh-config YOUR_SSH_CONFIG
+```
+
+Real endpoints and process metadata are saved only under ignored `build/`;
+stdout contains aggregate counts. This is a sequential live audit, **not an
+atomic migration snapshot**. Process disappearance/reuse is flagged where observed;
+connections can still change between reads. Socket tables can contain entries
+with no observed descriptor owner. Conntrack also contains incoming and expired-
+socket flows, so absence of a candidate does not establish an uncontained sender.
+Truncated/incomplete tables or a changed boot are rejected.
+
+Unconnected UDP sockets have no peer in `/proc/net/udp`. The audit retains all
+candidate source-port/address matches to conntrack's original direction, including
+wildcard binds. It does not guess one owner when several sockets match. A frozen
+transition must resolve these ambiguities, IPv4-mapped cross-family attribution,
+descriptor sharing, local relays and already-queued packets before claiming that
+old group-0 traffic is contained. No live vendor connection has been closed by
+these tools, and neither tool changes the diagnostic HA entity's unknown privacy
+state.

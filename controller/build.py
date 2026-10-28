@@ -9,7 +9,13 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--zig", default="zig")
 parser.add_argument(
     "--target",
-    choices=("station-ctl", "net-owner-probe", "vendor-launch-probe", "mode-store-probe"),
+    choices=(
+        "station-ctl",
+        "net-owner-probe",
+        "vendor-launch-probe",
+        "mode-store-probe",
+        "socket-close-probe",
+    ),
     default="station-ctl",
 )
 args = parser.parse_args()
@@ -19,6 +25,7 @@ sources = {
     "net-owner-probe": "net_owner_probe.c",
     "vendor-launch-probe": "vendor_launch_probe.c",
     "mode-store-probe": "mode_store_probe.c",
+    "socket-close-probe": "socket_close_probe.c",
 }
 output = root / "build" / (args.target + ".armhf")
 output.parent.mkdir(exist_ok=True)
