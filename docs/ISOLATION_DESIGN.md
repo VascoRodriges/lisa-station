@@ -190,7 +190,10 @@ Truncated/incomplete tables or a changed boot are rejected.
 
 Unconnected UDP sockets have no peer in `/proc/net/udp`. The audit retains all
 candidate source-port/address matches to conntrack's original direction, including
-wildcard binds. It does not guess one owner when several sockets match. A frozen
+wildcard binds. Original/reply legs are now retained separately. The
+[known-role audit](VENDOR_SCOPE.md) orients both legs against assigned local
+addresses, including inbound/NAT cases, and keeps unknown dual-stack behavior
+explicit. It does not guess one owner when several sockets match. A frozen
 transition must resolve these ambiguities, IPv4-mapped cross-family attribution,
 descriptor sharing, local relays and already-queued packets before claiming that
 old group-0 traffic is contained. No live vendor connection has been closed by

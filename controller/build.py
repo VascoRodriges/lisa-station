@@ -23,6 +23,7 @@ parser.add_argument(
         "closed-transition-probe",
         "flow-store-probe",
         "closed-flow-probe",
+        "tcp-evidence-probe",
     ),
     default="station-ctl",
 )
@@ -42,6 +43,7 @@ sources = {
     "closed-transition-probe": "closed_transition_probe.c",
     "flow-store-probe": "flow_store_probe.c",
     "closed-flow-probe": "closed_flow_probe.c",
+    "tcp-evidence-probe": "tcp_evidence_probe.c",
 }
 output = root / "build" / (args.target + ".armhf")
 output.parent.mkdir(exist_ok=True)

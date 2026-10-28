@@ -72,6 +72,9 @@ production isolation, boot enforcement and explicit Alice return remain pending.
 [Exact-flow recovery](docs/FLOW_RECOVERY.md) also passed a closed-transition trial
 with persisted evidence, selective rules and a fresh coordinator after a crash;
 only owned test sockets were touched and stock Alice stayed running.
+The [known-service audit](docs/VENDOR_SCOPE.md) now joins live per-FD TCP evidence
+with process snapshots and reports UDP, local-relay and log/data-path gaps. It
+is read-only and does not create an executable isolation plan.
 
 ## Development
 

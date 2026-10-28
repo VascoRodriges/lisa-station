@@ -42,6 +42,19 @@ for directory in /proc/[0-9]*; do
                 inode=${link#socket:\[}; inode=${inode%\]}
                 printf 'S\t%s\t%s\n' "$pid" "$inode";;
         esac
+        resource=
+        case "$role" in vendor-*|audio-diagnostics)
+            case "$link" in
+                /dev/kmsg) resource=kernel-log;;
+                /bkupgrade/data/quasar/daemons_logs/*) resource=vendor-log;;
+                /bkupgrade/data/quasar/data/*) resource=vendor-data;;
+                /tmp/messages*) resource=system-log;;
+            esac;;
+        esac
+        if [ -n "$resource" ]; then
+            flags=$(awk '/^flags:/{print $2}' "$directory/fdinfo/${descriptor##*/}" 2>/dev/null) || { printf 'R\t%s\n' "$pid"; continue; }
+            printf 'F\t%s\t%s\t%s\t%s\n' "$pid" "${descriptor##*/}" "$resource" "$flags"
+        fi
     done
     after=$(cat "$directory/stat" 2>/dev/null) || { printf 'R\t%s\n' "$pid"; continue; }
     tail=${after##*) }; set -- $tail; [ "$#" -ge 20 ] || exit 3
@@ -85,28 +98,36 @@ def proc_socket(line, table):
 
 
 def conntrack_tuple(line):
-    """Original direction only; never mistake the reply tuple for another flow."""
+    """Keep original and reply directions distinct, including NAT translations."""
     values = line.split()
     if len(values) < 6 or values[0] not in ("ipv4", "ipv6") or values[2] not in ("tcp", "udp"):
         return None
-    fields = {}
+    fields = defaultdict(list)
     for value in values[5:]:
         key, separator, item = value.partition("=")
-        if separator and key in ("src", "dst", "sport", "dport") and key not in fields:
-            fields[key] = item
-    if len(fields) != 4:
+        if separator and key in ("src", "dst", "sport", "dport"):
+            fields[key].append(item)
+    if len(fields) != 4 or any(len(items) != 2 for items in fields.values()):
         raise ValueError("incomplete conntrack tuple")
-    for key in ("src", "dst"):
-        fields[key] = str(ipaddress.ip_address(fields[key]))
-    for key in ("sport", "dport"):
-        fields[key] = int(fields[key])
-        if not 0 <= fields[key] <= 65535:
-            raise ValueError("invalid conntrack port")
-    return dict(protocol=values[2], family=4 if values[0] == "ipv4" else 6, **fields)
+    family = 4 if values[0] == "ipv4" else 6
+    legs = []
+    for index in range(2):
+        leg = {key: items[index] for key, items in fields.items()}
+        for key in ("src", "dst"):
+            address = ipaddress.ip_address(leg[key])
+            if address.version != family:
+                raise ValueError("conntrack family mismatch")
+            leg[key] = str(address)
+        for key in ("sport", "dport"):
+            leg[key] = int(leg[key])
+            if not 0 <= leg[key] <= 65535:
+                raise ValueError("invalid conntrack port")
+        legs.append(leg)
+    return dict(protocol=values[2], family=family, **legs[0], reply=legs[1])
 
 
 def parse_inventory(text):
-    processes, inodes, tables, races = {}, defaultdict(set), {}, set()
+    processes, inodes, tables, races, resources = {}, defaultdict(set), {}, set(), []
     boot, end, current = None, None, None
     for line in text.splitlines():
         fields = line.split("\t")
@@ -124,6 +145,17 @@ def parse_inventory(text):
             inodes[int(fields[2])].add(int(fields[1]))
         elif kind == "R" and len(fields) == 2:
             races.add(int(fields[1]))
+        elif kind == "F" and len(fields) == 5:
+            if fields[3] not in {"kernel-log", "vendor-log", "vendor-data", "system-log"} or not re.fullmatch(
+                r"[0-7]+", fields[4]
+            ):
+                raise ValueError("invalid resource metadata")
+            resource = dict(
+                pid=int(fields[1]), descriptor=int(fields[2]), kind=fields[3], flags=int(fields[4], 8)
+            )
+            if resource["pid"] not in processes or resource["descriptor"] < 0:
+                raise ValueError("resource owner absent")
+            resources.append(resource)
         elif kind == "N" and len(fields) == 2 and fields[1] not in tables:
             current = fields[1]
             tables[current] = []
@@ -176,6 +208,7 @@ def parse_inventory(text):
         sockets=sockets,
         conntrack=flows,
         owner_races=sorted(races),
+        resource_links=resources,
         atomic_snapshot=False,
         isolation_proven=False,
     )

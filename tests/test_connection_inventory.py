@@ -51,10 +51,33 @@ def test_unconnected_udp_keeps_multiple_candidates_and_original_direction():
     result = parse_inventory(snapshot())
     flow = result["conntrack"][0]
     assert flow["src"] == "203.0.113.10" and flow["sport"] == 50100
+    assert flow["reply"] == dict(src="198.51.100.20", sport=53, dst="203.0.113.10", dport=50100)
     assert flow["candidate_inodes"] == [300, 301]
     assert result["sockets"][0]["owners"] == []
     assert summary(result)["sockets_without_observed_owner"] == 1
     assert result["atomic_snapshot"] is False and result["isolation_proven"] is False
+
+
+def test_resource_audit_exports_classes_and_flags_without_file_contents():
+    text = snapshot().replace("N\ttcp\n", "F\t101\t3\tvendor-log\t0100001\nN\ttcp\n")
+    assert parse_inventory(text)["resource_links"] == [
+        dict(pid=101, descriptor=3, kind="vendor-log", flags=0o100001)
+    ]
+
+
+@pytest.mark.parametrize("fault", ("partial_reply", "family", "resource_flags", "resource_owner"))
+def test_invalid_conntrack_or_resource_metadata_rejected(fault):
+    text = snapshot()
+    if fault == "partial_reply":
+        text = text.replace("src=198.51.100.20 dst=203.0.113.10 sport=53 dport=50100", "src=198.51.100.20")
+    elif fault == "family":
+        text = text.replace("src=198.51.100.20", "src=::1")
+    elif fault == "resource_flags":
+        text = text.replace("N\ttcp\n", "F\t101\t3\tvendor-log\tinvalid\nN\ttcp\n")
+    elif fault == "resource_owner":
+        text = text.replace("N\ttcp\n", "F\t999\t3\tvendor-log\t01\nN\ttcp\n")
+    with pytest.raises(ValueError):
+        parse_inventory(text)
 
 
 def test_changed_owner_is_explicitly_unreliable():
