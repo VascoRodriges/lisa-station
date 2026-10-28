@@ -16,6 +16,8 @@ parser.add_argument(
         "mode-store-probe",
         "socket-close-probe",
         "flow-quarantine-probe",
+        "service-profile-probe",
+        "service-gate-probe",
     ),
     default="station-ctl",
 )
@@ -28,6 +30,8 @@ sources = {
     "mode-store-probe": "mode_store_probe.c",
     "socket-close-probe": "socket_close_probe.c",
     "flow-quarantine-probe": "flow_quarantine_probe.c",
+    "service-profile-probe": "service_profile_probe.c",
+    "service-gate-probe": "service_gate_probe.c",
 }
 output = root / "build" / (args.target + ".armhf")
 output.parent.mkdir(exist_ok=True)

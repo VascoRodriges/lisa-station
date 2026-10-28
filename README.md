@@ -62,6 +62,8 @@ The development tree includes scoped packet filtering, exact TCP closure,
 post-close kernel reply/UDP quarantine and passive connection ownership tools.
 These do not enable mode switching or change the released v0.1.0 feature set.
 The planned policy targets Yandex services; unrelated applications retain internet access.
+Independent [DNS/time profiles and startup admission](docs/SERVICE_PROFILES.md)
+have been qualified separately; boot enforcement is not installed yet.
 
 ## Development
 

@@ -40,3 +40,7 @@ python controller/build.py --target mode-store-probe
 Running the resulting binary with `--station-storage` uses a fresh test directory
 under the existing controller lab directory. The default uses `/tmp`, enabling an
 unprivileged host build/test in CI as well.
+
+The new [startup admission primitive](SERVICE_PROFILES.md) requires a matching
+revision/boot permit and holds a shared lease against concurrent mode writes.
+It adds admission checks; it does not install init wrappers or prove isolation.

@@ -2,6 +2,8 @@
  * Production: a root-owned 0700 directory, expected_owner=0. A missing or invalid
  * record never grants permission to start Alice.
  */
+#ifndef LISA_MODE_STORE_H
+#define LISA_MODE_STORE_H
 #include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
@@ -121,3 +123,4 @@ static enum store_result mode_store_request(int directory, uid_t owner, uint64_t
     close(lock);
     return result;
 }
+#endif
