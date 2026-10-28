@@ -24,6 +24,7 @@ parser.add_argument(
         "flow-store-probe",
         "closed-flow-probe",
         "tcp-evidence-probe",
+        "diagnostics-guard-probe",
     ),
     default="station-ctl",
 )
@@ -44,6 +45,7 @@ sources = {
     "flow-store-probe": "flow_store_probe.c",
     "closed-flow-probe": "closed_flow_probe.c",
     "tcp-evidence-probe": "tcp_evidence_probe.c",
+    "diagnostics-guard-probe": "diagnostics_guard_probe.c",
 }
 output = root / "build" / (args.target + ".armhf")
 output.parent.mkdir(exist_ok=True)
@@ -60,6 +62,7 @@ subprocess.run(
         "-Wextra",
         "-Werror",
         str(root / "controller" / sources[args.target]),
+        *(["-ldl"] if args.target == "diagnostics-guard-probe" else []),
         "-o",
         str(output),
     ],

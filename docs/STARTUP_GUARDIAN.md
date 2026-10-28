@@ -133,6 +133,11 @@ in this trial belongs only to its private fixture.
 
 ## Deployment still required
 
+The fixed backend also supports a separate guarded `diagnostics` role. Its
+[ALSA-monitor qualification](DIAGNOSTICS_GUARD.md) covers real startup, D-Bus
+ownership, private logs, verified stop and fence-protected restart refusal.
+It is a separate bounded administrative trial; no diagnostic HA command changed.
+
 The backend is not hooked into init or the HA mode selector. A development
 [closed-transition engine](CLOSED_TRANSITION.md) now connects a durable fence to
 policy verification and tracked stop. Production integration must still

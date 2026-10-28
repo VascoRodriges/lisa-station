@@ -42,6 +42,7 @@ jobs:
       - run: python controller/build.py --target flow-store-probe
       - run: python controller/build.py --target closed-flow-probe
       - run: python controller/build.py --target tcp-evidence-probe
+      - run: python controller/build.py --target diagnostics-guard-probe
       - name: Exercise mode storage on the host
         run: |
           cc -O2 -Wall -Wextra -Werror controller/mode_store_probe.c -o build/mode-store-host
@@ -113,3 +114,7 @@ jobs:
         with:
           name: station-tcp-evidence-armhf
           path: build/tcp-evidence-probe.armhf
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: station-diagnostics-guard-armhf
+          path: build/diagnostics-guard-probe.armhf

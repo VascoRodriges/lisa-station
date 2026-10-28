@@ -73,6 +73,11 @@ python -m controller.vendor_inventory YOUR_SPEAKER_SSH_ALIAS \
 
 ## Completion still blocked
 
+The independent [diagnostics guard](DIAGNOSTICS_GUARD.md) now qualifies this
+role's gated lifecycle and private ephemeral log paths. Its exact shared-memory
+object and D-Bus connection are explicit local relay dependencies, not evidence
+of complete isolation. The census and other vendor file/UDP paths remain unchanged.
+
 These collections are sequential. They do not freeze all senders or prevent a
 socket from appearing between observations. Consequently `atomic_snapshot`,
 `production_plan_ready`, `apply_supported` and `isolation_verified` remain false.

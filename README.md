@@ -75,6 +75,10 @@ only owned test sockets were touched and stock Alice stayed running.
 The [known-service audit](docs/VENDOR_SCOPE.md) now joins live per-FD TCP evidence
 with process snapshots and reports UDP, local-relay and log/data-path gaps. It
 is read-only and does not create an executable isolation plan.
+The [ALSA diagnostics guard](docs/DIAGNOSTICS_GUARD.md) passed a bounded real
+service trial with private ephemeral logs, direct internet-socket denial and
+verified stock restoration. Local D-Bus/shared-memory relays remain explicit;
+this backend is not installed into boot or exposed to HA mode controls yet.
 
 ## Development
 
