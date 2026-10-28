@@ -15,7 +15,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-static int diag_same_tuple(const struct inet_diag_sockid *a, const struct inet_diag_sockid *b) {
+static inline int diag_same_tuple(const struct inet_diag_sockid *a, const struct inet_diag_sockid *b) {
     return a->idiag_sport == b->idiag_sport && a->idiag_dport == b->idiag_dport &&
         !memcmp(a->idiag_src, b->idiag_src, sizeof(a->idiag_src)) &&
         !memcmp(a->idiag_dst, b->idiag_dst, sizeof(a->idiag_dst)) &&
@@ -23,7 +23,7 @@ static int diag_same_tuple(const struct inet_diag_sockid *a, const struct inet_d
 }
 
 /* Returns zero or a negative errno. Each exchange uses its own bound socket. */
-static int diag_exchange(int family, const struct inet_diag_sockid *id, int destroy,
+static inline int diag_exchange(int family, const struct inet_diag_sockid *id, int destroy,
                          struct inet_diag_msg *answer) {
     if ((family != AF_INET && family != AF_INET6) || !id->idiag_sport || !id->idiag_dport ||
         (destroy && id->idiag_cookie[0] == INET_DIAG_NOCOOKIE &&

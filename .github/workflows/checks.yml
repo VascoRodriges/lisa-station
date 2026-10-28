@@ -39,6 +39,8 @@ jobs:
       - run: python controller/build.py --target startup-guardian-probe
       - run: python controller/build.py --target station-service
       - run: python controller/build.py --target closed-transition-probe
+      - run: python controller/build.py --target flow-store-probe
+      - run: python controller/build.py --target closed-flow-probe
       - name: Exercise mode storage on the host
         run: |
           cc -O2 -Wall -Wextra -Werror controller/mode_store_probe.c -o build/mode-store-host
@@ -49,6 +51,9 @@ jobs:
           ./build/startup-guardian-host
           cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/closed_transition_probe.c -o build/closed-transition-host
           ./build/closed-transition-host
+          cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/flow_store_probe.c -o build/flow-store-host
+          ./build/flow-store-host
+          cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/closed_flow_probe.c -o build/closed-flow-host
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: station-controller-armhf
@@ -93,3 +98,11 @@ jobs:
         with:
           name: station-closed-transition-qualification-armhf
           path: build/closed-transition-probe.armhf
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: station-flow-evidence-qualification-armhf
+          path: build/flow-store-probe.armhf
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: station-closed-flow-qualification-armhf
+          path: build/closed-flow-probe.armhf

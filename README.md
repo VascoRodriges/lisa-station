@@ -69,6 +69,9 @@ launcher/start-stop-recovery trial. It is not yet connected to the HA mode selec
 The [durable close engine](docs/CLOSED_TRANSITION.md) adds a persistent startup
 fence, interruption recovery and a scoped vendor policy/stop trial. Complete
 production isolation, boot enforcement and explicit Alice return remain pending.
+[Exact-flow recovery](docs/FLOW_RECOVERY.md) also passed a closed-transition trial
+with persisted evidence, selective rules and a fresh coordinator after a crash;
+only owned test sockets were touched and stock Alice stayed running.
 
 ## Development
 

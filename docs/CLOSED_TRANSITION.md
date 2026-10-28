@@ -90,9 +90,10 @@ a close request during child preparation and unrelated-process survival.
 
 The quasar group filter does not cover old untagged sockets, kernel orphan
 replies, independent diagnostics, local root relays or telemetry queues.
-Exact-flow quarantine and TCP destruction have separate qualification tools;
-they are not yet integrated into this transaction's callbacks. Group-only
-completion must never be promoted to whole-vendor privacy proof.
+[Durable exact-flow quarantine](FLOW_RECOVERY.md) now has a separate integrated
+transaction trial on owned sockets, including a fresh coordinator after a crash.
+Those callbacks are not yet composed with the real quasar/vendor inventory.
+Group-only completion must never be promoted to whole-vendor privacy proof.
 
 Production work still includes policy installation/ownership, all vendor roles,
 independent DNS/time profiles, relay/queue handling, boot enforcement before any

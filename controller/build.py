@@ -21,6 +21,8 @@ parser.add_argument(
         "startup-guardian-probe",
         "station-service",
         "closed-transition-probe",
+        "flow-store-probe",
+        "closed-flow-probe",
     ),
     default="station-ctl",
 )
@@ -38,6 +40,8 @@ sources = {
     "startup-guardian-probe": "startup_guardian_probe.c",
     "station-service": "station_service.c",
     "closed-transition-probe": "closed_transition_probe.c",
+    "flow-store-probe": "flow_store_probe.c",
+    "closed-flow-probe": "closed_flow_probe.c",
 }
 output = root / "build" / (args.target + ".armhf")
 output.parent.mkdir(exist_ok=True)
