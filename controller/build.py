@@ -18,6 +18,8 @@ parser.add_argument(
         "flow-quarantine-probe",
         "service-profile-probe",
         "service-gate-probe",
+        "startup-guardian-probe",
+        "station-service",
     ),
     default="station-ctl",
 )
@@ -32,6 +34,8 @@ sources = {
     "flow-quarantine-probe": "flow_quarantine_probe.c",
     "service-profile-probe": "service_profile_probe.c",
     "service-gate-probe": "service_gate_probe.c",
+    "startup-guardian-probe": "startup_guardian_probe.c",
+    "station-service": "station_service.c",
 }
 output = root / "build" / (args.target + ".armhf")
 output.parent.mkdir(exist_ok=True)

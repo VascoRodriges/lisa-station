@@ -77,7 +77,7 @@ commit a transition while an admitted start is active. Busy admission denies
 startup. Overwriting an occupied lease is rejected; close-on-exec descriptors
 help avoid leaving the lock in a daemon accidentally.
 
-The future trusted guardian must hold the lease in its parent until its tagged,
+The [startup guardian](STARTUP_GUARDIAN.md) holds the lease in its parent until its tagged,
 fixed child startup has completed and is tracked. **Checking, releasing the
 lease, then starting an unguarded process is unsafe.** The controller must publish
 permits under the same transition serialization only after verifying chosen
@@ -95,7 +95,7 @@ python controller/build.py --target service-gate-probe
 
 ## Remaining integration work
 
-- Implement the trusted guardian and transition executor, with observed
+- Connect the implemented guardian to the transition executor, with observed
   policy/profile validation before publishing runtime permits.
 - Enforce boot policy before diagnostics and all vendor launch paths, including
   init wrappers and launcher restarts; retain independent root SSH recovery.

@@ -36,12 +36,16 @@ jobs:
       - run: python controller/build.py --target flow-quarantine-probe
       - run: python controller/build.py --target service-profile-probe
       - run: python controller/build.py --target service-gate-probe
+      - run: python controller/build.py --target startup-guardian-probe
+      - run: python controller/build.py --target station-service
       - name: Exercise mode storage on the host
         run: |
           cc -O2 -Wall -Wextra -Werror controller/mode_store_probe.c -o build/mode-store-host
           ./build/mode-store-host
           cc -O2 -Wall -Wextra -Werror controller/service_gate_probe.c -o build/service-gate-host
           ./build/service-gate-host
+          cc -O2 -Wall -Wextra -Werror controller/startup_guardian_probe.c -o build/startup-guardian-host
+          ./build/startup-guardian-host
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: station-controller-armhf
@@ -74,3 +78,11 @@ jobs:
         with:
           name: station-service-gate-qualification-armhf
           path: build/service-gate-probe.armhf
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: station-startup-guardian-qualification-armhf
+          path: build/startup-guardian-probe.armhf
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: station-service-backend-armhf
+          path: build/station-service.armhf

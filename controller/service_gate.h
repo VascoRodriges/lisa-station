@@ -10,7 +10,7 @@
 enum gate_result { GATE_DENIED, GATE_GRANTED, GATE_BUSY };
 struct gate_lease { int descriptor; uint64_t revision; };
 
-static int gate_boot_valid(const char *boot) {
+static inline int gate_boot_valid(const char *boot) {
     if (!boot || strlen(boot) != 36) return 0;
     for (unsigned i = 0; i < 36; ++i) {
         if (i == 8 || i == 13 || i == 18 || i == 23) {
@@ -20,7 +20,7 @@ static int gate_boot_valid(const char *boot) {
     return 1;
 }
 
-static int gate_permit_valid(int runtime, uid_t owner, uint64_t revision, const char *boot) {
+static inline int gate_permit_valid(int runtime, uid_t owner, uint64_t revision, const char *boot) {
     if (!store_directory_valid(runtime, owner) || !gate_boot_valid(boot)) return 0;
     int file = openat(runtime, "vendor.permit", O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC);
     if (file < 0) return 0;
@@ -39,7 +39,7 @@ static int gate_permit_valid(int runtime, uid_t owner, uint64_t revision, const 
     return length > 0 && (size_t)length == used && !memcmp(actual, expected, used);
 }
 
-static enum gate_result gate_acquire(int state, int runtime, uid_t owner,
+static inline enum gate_result gate_acquire(int state, int runtime, uid_t owner,
                                      const char *boot, struct gate_lease *lease) {
     if (lease->descriptor >= 0) return GATE_DENIED;
     lease->revision = 0;
@@ -61,7 +61,7 @@ static enum gate_result gate_acquire(int state, int runtime, uid_t owner,
     return GATE_GRANTED;
 }
 
-static void gate_release(struct gate_lease *lease) {
+static inline void gate_release(struct gate_lease *lease) {
     if (lease->descriptor >= 0) close(lease->descriptor);
     lease->descriptor = -1; lease->revision = 0;
 }

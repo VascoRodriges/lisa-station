@@ -64,6 +64,8 @@ These do not enable mode switching or change the released v0.1.0 feature set.
 The planned policy targets Yandex services; unrelated applications retain internet access.
 Independent [DNS/time profiles and startup admission](docs/SERVICE_PROFILES.md)
 have been qualified separately; boot enforcement is not installed yet.
+The [fixed startup backend](docs/STARTUP_GUARDIAN.md) also passed a bounded real
+launcher/start-stop-recovery trial. It is not yet connected to the HA mode selector.
 
 ## Development
 

@@ -8,7 +8,7 @@ This roadmap distinguishes shipped code from acceptance targets.
 |---|---|---|---|
 | 1 | Status controller, pinned transport, UI setup and diagnostic entities | Real device status; incompatible data rejected; offline state safe; no false privacy claim | v0.1.0 |
 | 2 | Speaker-local vendor isolation | Cover senders outside the main launcher, descendants, old sockets, local relays, DNS, IPv4/IPv6 and telemetry queues; other applications retain internet | Ownership/flow tests passed; independent DNS/time profiles validated in parallel on device; production policy not installed |
-| 3 | Persistent mode controller | Alice / Lisa / Paused, serialized transitions, verified actual state, boot enforcement before vendor startup, fail closed, explicit return to Alice | Intent storage: 27 device checks; revision/boot admission leases: 31 device checks; installed boot gates and executor pending |
+| 3 | Persistent mode controller | Alice / Lisa / Paused, serialized transitions, verified actual state, boot enforcement before vendor startup, fail closed, explicit return to Alice | Intent/admission and 46 guardian lifecycle checks passed; fixed quasar backend qualified with real startup/closed recovery; installed boot gates and complete policy executor pending |
 | 4 | Permanent speech service | No workstation dependency; local KWS, standalone VQE, target-speaker extraction on a server, Assist through response playback, physical mute honored | Bounded research prototype exists outside this release |
 | 5 | Assist satellite and voice settings | Pipeline choice, listening/processing/responding states, LED feedback, measured latency and recovery | Planned |
 | 6 | Independent media player | Playback/volume/metadata, files/URLs/radio, Music Assistant without the old Yandex Station backend, announcements and volume restoration | Planned |
@@ -49,3 +49,5 @@ even when the speaker does not interact with Yandex.
 
 See [DNS/time profiles and startup admission](SERVICE_PROFILES.md) for the new
 components, measured results and remaining deployment requirements.
+The [startup guardian](STARTUP_GUARDIAN.md) now links admission to a tracked
+process and closed reconciliation; production boot/mode switching remains pending.
