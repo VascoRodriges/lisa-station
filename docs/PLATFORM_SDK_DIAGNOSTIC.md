@@ -85,7 +85,7 @@ python -m controller.qualify_platform_sdk YOUR_SPEAKER_SSH_ALIAS \
 
 ## Remaining work
 
-The SDK’s static imports/configuration also identify a GStreamer network time
+The SDKâ€™s static imports/configuration also identify a GStreamer network time
 provider. Its [documented constructor](https://gstreamer.freedesktop.org/documentation/net/gstnettimeprovider.html)
 exports a clock on a network address/port and can fail. The observed media error
 is consistent with deliberate socket denial; it does not establish a missing

@@ -193,5 +193,5 @@ remain required; these diagnostic failures are not functional acceptance.
 The [preconnected byte-channel foundation](UNIX_CHANNEL.md) now verifies kernel
 retarget/descriptor-passing denial and fresh channels despite retained old queue
 references. It uses only own mock endpoints and has not opened the real bus or
-changed the SDK’s network policy. Protocol adapters and receiver revocation remain
+changed the SDKâ€™s network policy. Protocol adapters and receiver revocation remain
 required before production composition.
