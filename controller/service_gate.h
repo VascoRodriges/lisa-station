@@ -45,7 +45,7 @@ static inline enum gate_result gate_acquire_internal(int state, int runtime, uid
     lease->revision = 0;
     if (!store_directory_valid(state, owner) || !store_directory_valid(runtime, owner) ||
         !gate_boot_valid(boot)) return GATE_DENIED;
-    if(starting && mode_store_close_pending(state,owner)) return GATE_DENIED;
+    if(starting && (mode_store_close_pending(state,owner)||mode_store_open_pending(state,owner))) return GATE_DENIED;
     int lock = openat(state, "mode.lock", O_RDWR | O_CREAT | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC, 0600);
     if (lock < 0) return GATE_DENIED;
     if (!store_file_valid(lock, owner)) { close(lock); return GATE_DENIED; }
@@ -54,7 +54,7 @@ static inline enum gate_result gate_acquire_internal(int state, int runtime, uid
         close(lock); return busy ? GATE_BUSY : GATE_DENIED;
     }
     struct mode_record record;
-    if ((starting && mode_store_close_pending(state,owner)) ||
+    if ((starting && (mode_store_close_pending(state,owner)||mode_store_open_pending(state,owner))) ||
         mode_store_read(state, owner, &record) != STORE_OK || record.requested != LISA_MODE_ALICE ||
         !gate_permit_valid(runtime, owner, record.revision, boot)) {
         close(lock); return GATE_DENIED;

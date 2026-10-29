@@ -71,8 +71,8 @@ static inline enum store_result mode_store_read(int directory, uid_t owner, stru
     return STORE_OK;
 }
 
-/* Presence, corruption or inability to inspect a close fence all deny Alice.
- * The transaction reader interprets its contents separately; boot never guesses. */
+/* Presence, corruption or inability to inspect a transaction fence deny Alice.
+ * The transaction readers interpret contents separately; boot never guesses. */
 static inline int mode_store_close_pending(int directory, uid_t owner) {
     if (!store_directory_valid(directory, owner)) return 1;
     struct stat info;
@@ -80,8 +80,15 @@ static inline int mode_store_close_pending(int directory, uid_t owner) {
     return errno!=ENOENT;
 }
 
+static inline int mode_store_open_pending(int directory, uid_t owner) {
+    if (!store_directory_valid(directory, owner)) return 1;
+    struct stat info;
+    if (!fstatat(directory,"opening.request",&info,AT_SYMLINK_NOFOLLOW)) return 1;
+    return errno!=ENOENT;
+}
+
 static inline enum lisa_mode mode_store_boot_choice(int directory, uid_t owner) {
-    if (mode_store_close_pending(directory,owner)) return LISA_MODE_PAUSED;
+    if (mode_store_close_pending(directory,owner) || mode_store_open_pending(directory,owner)) return LISA_MODE_PAUSED;
     struct mode_record record;
     return mode_store_read(directory, owner, &record) == STORE_OK ? record.requested : LISA_MODE_PAUSED;
 }
@@ -96,30 +103,26 @@ static inline int store_write_all(int descriptor, const char *data, size_t size)
     return 0;
 }
 
-static inline enum store_result mode_store_request(int directory, uid_t owner, uint64_t expected_revision,
+/* Internal commit: caller retains the validated exclusive mode.lock. Keeping
+ * that lease across preparation/intent/permit publication prevents starts or
+ * raw intent writers from crossing an explicit opening transaction. */
+static inline enum store_result mode_store_commit_locked(int directory, uid_t owner, uint64_t expected_revision,
                                            enum lisa_mode requested, struct mode_record *committed) {
     if (!mode_name(requested) || !store_directory_valid(directory, owner)) return STORE_INVALID;
-    int lock = openat(directory, "mode.lock", O_RDWR | O_CREAT | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC, 0600);
-    if (lock < 0) return errno == ELOOP ? STORE_INVALID : STORE_IO;
-    enum store_result result = STORE_IO;
-    if (!store_file_valid(lock, owner)) { close(lock); return STORE_INVALID; }
-    if (flock(lock, LOCK_EX | LOCK_NB)) {
-        result = errno == EWOULDBLOCK ? STORE_BUSY : STORE_IO;
-        close(lock); return result;
-    }
+    enum store_result result;
     struct mode_record current = {0, LISA_MODE_PAUSED};
     result = mode_store_read(directory, owner, &current);
-    if (result != STORE_OK && result != STORE_MISSING) { close(lock); return result; }
-    if (current.revision != expected_revision) { close(lock); return STORE_CONFLICT; }
-    if (current.revision == UINT64_MAX) { close(lock); return STORE_INVALID; }
+    if (result != STORE_OK && result != STORE_MISSING) { return result; }
+    if (current.revision != expected_revision) { return STORE_CONFLICT; }
+    if (current.revision == UINT64_MAX) { return STORE_INVALID; }
     struct mode_record next = {current.revision + 1, requested};
     char payload[128], temporary[64];
     int size = snprintf(payload, sizeof(payload), "LISA_MODE_V1 %" PRIu64 " %s\n", next.revision, mode_name(requested));
     uint64_t nonce;
-    if (getrandom(&nonce, sizeof(nonce), 0) != (ssize_t)sizeof(nonce)) { close(lock); return STORE_IO; }
+    if (getrandom(&nonce, sizeof(nonce), 0) != (ssize_t)sizeof(nonce)) { return STORE_IO; }
     snprintf(temporary, sizeof(temporary), ".mode-%" PRIx64 ".tmp", nonce);
     int output = openat(directory, temporary, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
-    if (output < 0) { close(lock); return STORE_IO; }
+    if (output < 0) { return STORE_IO; }
     int failed = store_write_all(output, payload, (size_t)size) || fsync(output);
     if (close(output)) failed = 1;
     if (!failed && renameat(directory, temporary, directory, "mode.state")) failed = 1;
@@ -130,7 +133,20 @@ static inline enum store_result mode_store_request(int directory, uid_t owner, u
     } else {
         *committed = next; result = STORE_OK;
     }
-    close(lock);
     return result;
+}
+
+static inline enum store_result mode_store_request(int directory, uid_t owner, uint64_t expected_revision,
+                                           enum lisa_mode requested, struct mode_record *committed) {
+    if (!mode_name(requested) || !store_directory_valid(directory, owner)) return STORE_INVALID;
+    int lock = openat(directory, "mode.lock", O_RDWR | O_CREAT | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC, 0600);
+    if (lock < 0) return errno == ELOOP ? STORE_INVALID : STORE_IO;
+    if (!store_file_valid(lock, owner)) { close(lock); return STORE_INVALID; }
+    if (flock(lock, LOCK_EX | LOCK_NB)) {
+        enum store_result result = errno == EWOULDBLOCK ? STORE_BUSY : STORE_IO;
+        close(lock); return result;
+    }
+    enum store_result result = mode_store_commit_locked(directory,owner,expected_revision,requested,committed);
+    close(lock); return result;
 }
 #endif

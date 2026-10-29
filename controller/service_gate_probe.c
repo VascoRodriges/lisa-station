@@ -86,6 +86,15 @@ int main(int argc, char **argv) {
         gate_acquire(state,runtime,owner,BOOT,&lease)==GATE_DENIED &&
         mode_store_boot_choice(state,owner)==LISA_MODE_PAUSED && !unlinkat(state,"closed.request",0),
         "unsafe_close_fence_also_denies_start");
+    CHECK(!replace(state,"opening.request","broken\n",7,0600)&&
+        mode_store_boot_choice(state,owner)==LISA_MODE_PAUSED&&
+        gate_acquire(state,runtime,owner,BOOT,&lease)==GATE_DENIED,"incomplete_open_denies_start_and_boot");
+    CHECK(!unlinkat(state,"opening.request",0)&&!symlinkat("missing",state,"opening.request")&&
+        mode_store_boot_choice(state,owner)==LISA_MODE_PAUSED&&
+        gate_acquire(state,runtime,owner,BOOT,&lease)==GATE_DENIED,"unsafe_open_journal_also_denies");
+    CHECK(!unlinkat(state,"opening.request",0)&&gate_acquire(state,runtime,owner,BOOT,&lease)==GATE_GRANTED,
+        "open_fence_independent_of_old_close_fence");
+    gate_release(&lease);
     CHECK(!unlinkat(runtime, "vendor.permit", 0) &&
         gate_acquire(state, runtime, owner, BOOT, &lease) == GATE_DENIED, "revocation_denies_restart");
     const char *bad[] = {
@@ -131,7 +140,7 @@ cleanup:
     if (held >= 0) close(held);
     if (runtime >= 0) { unlinkat(runtime, "vendor.permit", 0); unlinkat(runtime, "linked", 0); close(runtime); }
     if (state >= 0) { unlinkat(state, "mode.state", 0); unlinkat(state, "mode.lock", 0);
-        unlinkat(state,"closed.request",0); close(state); }
+        unlinkat(state,"closed.request",0); unlinkat(state,"opening.request",0); close(state); }
     unlinkat(root, "run", AT_REMOVEDIR); unlinkat(root, "state", AT_REMOVEDIR); close(root);
     int removed = !rmdir(path);
     printf("{\"selftest\":\"service-gate\",\"checks\":%u,\"ok\":%s,\"temporary_directory_removed\":%s,"

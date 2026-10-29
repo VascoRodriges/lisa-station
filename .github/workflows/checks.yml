@@ -39,6 +39,7 @@ jobs:
       - run: python controller/build.py --target startup-guardian-probe
       - run: python controller/build.py --target station-service
       - run: python controller/build.py --target closed-transition-probe
+      - run: python controller/build.py --target open-transition-probe
       - run: python controller/build.py --target flow-store-probe
       - run: python controller/build.py --target closed-flow-probe
       - run: python controller/build.py --target tcp-evidence-probe
@@ -71,6 +72,8 @@ jobs:
           ./build/startup-guardian-host
           cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/closed_transition_probe.c -o build/closed-transition-host
           ./build/closed-transition-host
+          cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/open_transition_probe.c -o build/open-transition-host
+          ./build/open-transition-host
           cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/flow_store_probe.c -o build/flow-store-host
           ./build/flow-store-host
           cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/closed_flow_probe.c -o build/closed-flow-host
@@ -237,3 +240,7 @@ jobs:
         with:
           name: station-clock-call-proof-armhf
           path: build/time-clock-proof.so
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: station-open-transition-qualification-armhf
+          path: build/open-transition-probe.armhf

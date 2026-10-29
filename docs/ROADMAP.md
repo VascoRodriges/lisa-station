@@ -119,3 +119,8 @@ The [independent boot path](AUXILIARY_BOOT.md) now keeps mixer, DNS and time
 admission separate from vendor mode/policy failures. A real resolver trial passed
 with absent/corrupt state and a busy mode lock; the dispatcher still denies vendor
 fallbacks. Explicit Alice return, installation and composed acceptance remain pending.
+
+The [explicit Alice-return engine](ALICE_RETURN.md) now preserves a durable
+opening fence across every interrupted preparation/commit and fsync failure.
+It does not open vendor traffic yet: policy epoch rotation, coordinator callbacks,
+private platform state and production installation remain required.
