@@ -102,3 +102,7 @@ The [closed bootstrap coordinator](BOOTSTRAP.md) now durably reserves its
 per-boot namespace before selective policy installation, repairs known ordered
 subsets and refuses unknown rules. Its actual-kernel trial preserves ordinary
 stock services and does not claim installed isolation.
+The [independent mixer adapter](HARDWARE_VOLUME.md) now runs the real calibrated
+volume daemon with no networking, PCM nodes or host state. Its bounded handoff
+verifies hardware mapping and restores stock volume; permanent boot deployment,
+independent DNS/time and the remaining mode handlers are still pending.

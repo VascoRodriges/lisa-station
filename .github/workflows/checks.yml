@@ -57,6 +57,7 @@ jobs:
       - run: python controller/build.py --target boot-dispatch-probe
       - run: python controller/build.py --target station-boot
       - run: python controller/build.py --target boot-state-probe
+      - run: python controller/build.py --target auxiliary-probe
       - name: Exercise mode storage on the host
         run: |
           cc -O2 -Wall -Wextra -Werror controller/mode_store_probe.c -o build/mode-store-host
@@ -93,6 +94,9 @@ jobs:
           cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/station_boot.c -o build/station-boot-host
           cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/boot_state_probe.c -o build/boot-state-host
           ./build/boot-state-host
+          cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/auxiliary_probe.c -o build/auxiliary-host
+          chmod 700 build/auxiliary-host
+          ./build/auxiliary-host
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: station-controller-armhf
@@ -209,3 +213,7 @@ jobs:
         with:
           name: station-boot-state-qualification-armhf
           path: build/boot-state-probe.armhf
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: station-auxiliary-qualification-armhf
+          path: build/auxiliary-probe.armhf

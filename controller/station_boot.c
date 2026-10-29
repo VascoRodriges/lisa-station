@@ -1,9 +1,12 @@
 /* Closed bootstrap coordinator. No Alice permit publication, stock fallback,
- * firmware/init write or device-wide ban. Other boot handlers follow separately. */
+ * firmware/init write or device-wide ban. The independent mixer is implemented;
+ * DNS/time and vendor handlers follow separately. */
 #define _GNU_SOURCE
 #include <sys/statvfs.h>
 #include "boot_ledger.h"
 #include "relay_resources.h"
+#include "hardvolume_guard.h"
+#include "hardvolume_mixer.h"
 
 static int boot_directory(const char *path) {
     char copy[PATH_MAX]; if(!path||path[0]!='/'||strlen(path)>=sizeof(copy)) return -1;
@@ -35,7 +38,14 @@ static int installed(int base) {
     int valid=boot_ledger_file(fd,0)&&size==(ssize_t)sizeof(expected)-1&&!memcmp(text,expected,sizeof(expected)-1);
     close(fd); return valid;
 }
-static int process_scope(unsigned *legacy,unsigned *tagged) {
+static int process_scope(unsigned *legacy,unsigned *tagged,const char *runtime_path,const char *boot) {
+    struct guardian_record managed={0};
+    int runtime=boot_directory(runtime_path);
+    if(runtime>=0){
+        struct guardian_spec spec={.role="hardware",.executable="/usr/bin/hardvold",.observe=hardvolume_observe};
+        if(auxiliary_status(runtime,0,boot,&spec,&managed)!=GUARD_OK)memset(&managed,0,sizeof(managed));
+        close(runtime);
+    }
     *legacy=*tagged=0; DIR *directory=opendir("/proc"); struct dirent *entry; int ok=1;
     if(!directory) return -1;
     for(;;) {
@@ -46,7 +56,8 @@ static int process_scope(unsigned *legacy,unsigned *tagged) {
         struct process_stamp stamp;
         if(process_stamp((pid_t)pid,&stamp)||stamp.state=='Z'||stamp.state=='X') continue;
         unsigned role=relay_role((pid_t)pid);
-        if(role<4||relay_executable_is((pid_t)pid,"/usr/bin/hardvold")==1) ++*legacy;
+        int owned_hardware=managed.child==(pid_t)pid&&managed.child_ticks==stamp.ticks;
+        if(role<4||(!owned_hardware&&relay_executable_is((pid_t)pid,"/usr/bin/hardvold")==1)) ++*legacy;
         char path[64],line[1024]; snprintf(path,sizeof(path),"/proc/%ld/status",pid);
         FILE *file=fopen(path,"r");
         if(!file) { if(process_live((pid_t)pid,stamp.ticks)) ok=0; continue; }
@@ -91,11 +102,56 @@ static int production_chain(int runtime,int status) {
     if(close(fd)) failed=1;
     return failed||fsync(runtime)?-1:0;
 }
+static int hardware_absent(void) {
+    DIR *directory=opendir("/proc");if(!directory)return 0;struct dirent *entry;int absent=1;
+    while((entry=readdir(directory))){
+        char *end;long pid=strtol(entry->d_name,&end,10);if(*end||pid<2||pid>INT_MAX)continue;
+        struct process_stamp stamp;
+        if(!process_stamp((pid_t)pid,&stamp)&&stamp.state!='Z'&&stamp.state!='X'&&
+            relay_executable_is((pid_t)pid,"/usr/bin/hardvold")==1){absent=0;break;}
+    }
+    closedir(directory);return absent;
+}
+static int hardware_operation(int runtime,const char *runtime_path,const char *boot,int operation,int lab) {
+    char *const arguments[]={"hardvold",NULL};
+    struct guardian_spec spec={.role="hardware",.executable="/usr/bin/hardvold",.argv=arguments,
+        .prepare=hardvolume_prepare,.observe=hardvolume_observe,.actors_absent=hardvolume_absent,
+        .maximum_seconds=lab?35:0};
+    struct guardian_record record;
+    if(operation==4){long level;return lab&&hardware_absent()&&hardvolume_mixer_snapshot(1,&level)>=0;}
+    if(operation==2)return auxiliary_status(runtime,0,boot,&spec,&record)==GUARD_OK;
+    if(operation==3){
+        int found=guardian_read(runtime,0,"hardware.child",&record);
+        if(found==1)return 1; /* No journal means this supervisor never forked. */
+        if(found||record.revision!=1||strcmp(record.boot,boot))return 0;
+        if(!process_live(record.guardian,record.guardian_ticks)&&hardvolume_absent(&record))return 1;
+        return guardian_stop(runtime,0,boot,&spec)==GUARD_OK;
+    }
+    if(auxiliary_status(runtime,0,boot,&spec,&record)==GUARD_OK)return 1;
+    /* Refuse a duplicate unmanaged mixer daemon. Never terminate it here. */
+    if(!hardware_absent())return 0;
+    if(snprintf(hardvolume_root,sizeof(hardvolume_root),"%s/hardware-jail",runtime_path)>=(int)sizeof(hardvolume_root))return 0;
+    if(mkdir(hardvolume_root,0700)&&errno!=EEXIST)return 0;
+    int jail=boot_directory(hardvolume_root);if(jail<0)return 0;close(jail);
+    long level=0;int snapshot=hardvolume_mixer_snapshot(1,&level);
+    if(snapshot<0)return 0;
+    struct guardian_started started;
+    if(auxiliary_start(runtime,0,boot,&spec,&started)!=GUARD_OK)return 0;
+    if(!snapshot&&hardvolume_mixer_restore(level)){
+        guardian_stop(runtime,0,boot,&spec);return 0;
+    }
+    return 1;
+}
 int main(int argc,char **argv) {
     if(geteuid()||argc<2||argc>3) return 2;
-    int lab=!strcmp(argv[1],"--lab-policy")||!strcmp(argv[1],"--lab-policy-status");
-    int status=!strcmp(argv[1],"--status")||!strcmp(argv[1],"--lab-policy-status");
-    if((lab&&argc!=3)||(!lab&&argc!=2)||(!lab&&!status&&strcmp(argv[1],"--bootstrap"))) return 2;
+    int hardware=!strcmp(argv[1],"--hardware-start")||!strcmp(argv[1],"--lab-hardware-start")?1:
+        !strcmp(argv[1],"--hardware-status")||!strcmp(argv[1],"--lab-hardware-status")?2:
+        !strcmp(argv[1],"--hardware-stop")||!strcmp(argv[1],"--lab-hardware-stop")?3:
+        !strcmp(argv[1],"--lab-hardware-clear-stale")?4:0;
+    int lab=!strcmp(argv[1],"--lab-policy")||!strcmp(argv[1],"--lab-policy-status")||
+        (hardware&&!strncmp(argv[1],"--lab-",6));
+    int status=!strcmp(argv[1],"--status")||!strcmp(argv[1],"--lab-policy-status")||hardware==2;
+    if((lab&&argc!=3)||(!lab&&argc!=2)||(!lab&&!status&&!hardware&&strcmp(argv[1],"--bootstrap"))) return 2;
     alarm(10);
     uint64_t began=guardian_milliseconds(); const char *controls="null";
     char compatible[512],boot[37],state_path[PATH_MAX],runtime_path[PATH_MAX];
@@ -105,7 +161,8 @@ int main(int argc,char **argv) {
     for(ssize_t i=0;i+(ssize_t)sizeof(model)<=size;++i)
         if((!i||!compatible[i-1])&&!memcmp(compatible+i,model,sizeof(model))) supported=1;
     if(!supported||current_boot(boot)) return 3;
-    int state=-1,runtime=-1,lock=-1,mode_lock=-1,ready=0,ownership=0,observed=0; unsigned legacy=0,tagged=0;
+    int state=-1,runtime=-1,lock=-1,mode_lock=-1,ready=0,ownership=0,observed=0,completed=0; unsigned legacy=0,tagged=0;
+    const char *hardware_ok="null";
     const char *result="denied",*requested="unknown"; char chain[32]=""; struct mode_record mode;
     struct statvfs rootfs;
     if(statvfs("/",&rootfs)||!(rootfs.f_flag&ST_RDONLY)) goto done;
@@ -132,9 +189,9 @@ int main(int argc,char **argv) {
     if(mode_lock<0) { result="busy"; goto done; }
     if(mode_store_read(state,0,&mode)!=STORE_OK) goto done;
     requested=mode_name(mode.requested);
-    if(mode.requested==LISA_MODE_ALICE||process_scope(&legacy,&tagged)) goto done;
+    if((mode.requested==LISA_MODE_ALICE&&!hardware)||process_scope(&legacy,&tagged,runtime_path,boot)) goto done;
     observed=1;
-    if(tagged||(!lab&&legacy)) goto done;
+    if(tagged||(!lab&&legacy&&!hardware)) goto done;
     if(!lab&&!status) { if(mkdir(runtime_path,0700)&&errno!=EEXIST) goto done; }
     runtime=boot_directory(runtime_path);
     if(runtime<0||!no_runtime_actors(runtime)) goto done;
@@ -146,9 +203,15 @@ int main(int argc,char **argv) {
     ownership=owner==0;
     struct label_policy_names names;
     if(label_policy_names(chain,&names)) goto done;
+    if(hardware){
+        ready=ownership&&complete==0&&label_policy_verified(chain)&&!boot_policy_foreign_writers(&names,0);
+        if(!ready&&hardware<3)goto done;
+        completed=hardware_operation(runtime,runtime_path,boot,hardware,lab);
+        hardware_ok=completed?"true":"false";result=completed?"ok":"denied";goto done;
+    }
     if(status) {
         ready=ownership&&complete==0&&label_policy_verified(chain)&&!boot_policy_foreign_writers(&names,0);
-        result=ready?"ok":"denied"; goto done;
+        result=ready?"ok":"denied";completed=ready;goto done;
     }
     if(owner==1) {
         if(boot_policy_foreign_writers(&names,1)||!boot_policy_unused_label()||boot_ledger_publish(runtime,0,0,boot,chain)) goto done;
@@ -158,16 +221,16 @@ int main(int argc,char **argv) {
     int control4=policy_control_socket(AF_INET),control6=policy_control_socket(AF_INET6);
     controls=control4&&control6?"true":"false";
     if(!control4||!control6||boot_ledger_publish(runtime,0,1,boot,chain)) { result="incomplete"; goto done; }
-    ready=label_policy_verified(chain); result=ready?"ok":"incomplete";
+    ready=label_policy_verified(chain); result=ready?"ok":"incomplete";completed=ready;
 done: ;
     char legacy_text[16]="null",tagged_text[16]="null";
     if(observed) { snprintf(legacy_text,sizeof(legacy_text),"%u",legacy); snprintf(tagged_text,sizeof(tagged_text),"%u",tagged); }
     printf("{\"event\":\"station-boot\",\"operation\":\"%s\",\"result\":\"%s\",\"lab_policy_only\":%s,\"requested_mode\":\"%s\","
         "\"namespace_owned\":%s,\"policy_ready\":%s,\"known_legacy_actors\":%s,\"tagged_actors\":%s,\"vendor_started\":false,"
-        "\"unrelated_controls_verified\":%s,\"elapsed_ms\":%" PRIu64 ",\"stock_fallback\":false,\"isolation_verified\":false}\n",argv[1]+2,result,lab?"true":"false",requested,ownership?"true":"false",ready?"true":"false",legacy_text,tagged_text,controls,guardian_milliseconds()-began);
+        "\"unrelated_controls_verified\":%s,\"hardware_operation_ok\":%s,\"elapsed_ms\":%" PRIu64 ",\"stock_fallback\":false,\"isolation_verified\":false}\n",argv[1]+2,result,lab?"true":"false",requested,ownership?"true":"false",ready?"true":"false",legacy_text,tagged_text,controls,hardware_ok,guardian_milliseconds()-began);
     if(lock>=0) close(lock);
     if(mode_lock>=0) close(mode_lock);
     if(state>=0) close(state);
     if(runtime>=0) close(runtime);
-    return ready?0:4;
+    return completed?0:4;
 }

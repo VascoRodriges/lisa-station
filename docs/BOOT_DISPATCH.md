@@ -35,9 +35,9 @@ as at its usual position. The coordinator's actual ready/mode state must be
 observed separately; rcS exit status alone is not a privacy claim.
 
 The hardvolume init entry is a hardware dependency, distinct from the four
-previously guarded vendor roles. Its future adapter must preserve mixer behavior
-and deny external networking. This stage does not stop or replace the live
-hardware daemon.
+previously guarded vendor roles. Its [local adapter](HARDWARE_VOLUME.md) now
+preserves mixer behavior while denying networking and exposing no PCM nodes.
+The boot dispatcher remains uninstalled.
 
 ## Evidence
 
@@ -78,8 +78,8 @@ python controller/build.py --target boot-dispatch-probe
 
 ## Deployment still required
 
-Complete the fixed coordinator's independent DNS/time and constrained hardware
-handlers; its closed-policy ownership bootstrap is qualified separately. Bind every vendor admission to
+Complete the fixed coordinator's independent DNS/time handlers; its closed-policy
+bootstrap and constrained mixer are qualified separately. Bind every vendor admission to
 the verified current boot and explicit intent. Prepare an immutable private
 firmware/init manifest, reject unsupported entry changes and make direct init
 calls obey the same gates. The installer must verify all payloads/backups before

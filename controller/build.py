@@ -39,6 +39,7 @@ parser.add_argument(
         "boot-dispatch-probe",
         "station-boot",
         "boot-state-probe",
+        "auxiliary-probe",
     ),
     default="station-ctl",
 )
@@ -74,6 +75,7 @@ sources = {
     "boot-dispatch-probe": "boot_dispatch_probe.c",
     "station-boot": "station_boot.c",
     "boot-state-probe": "boot_state_probe.c",
+    "auxiliary-probe": "auxiliary_probe.c",
 }
 output = root / "build" / (args.target + ".armhf")
 output.parent.mkdir(exist_ok=True)

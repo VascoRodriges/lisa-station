@@ -1,7 +1,8 @@
 # Closed bootstrap coordinator
 
 `station-boot` now implements a real, bounded closed-policy bootstrap and
-read-only status. It is **not installed**. The independent service handlers,
+read-only status. It is **not installed**. The [hardware mixer handler](HARDWARE_VOLUME.md)
+is now implemented; independent DNS/time handlers,
 explicit Alice return and transactional boot installer remain unfinished;
 the HA release is still diagnostic and reports no verified isolation.
 
