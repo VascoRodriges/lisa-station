@@ -107,7 +107,7 @@ static inline int open_closed_record_matches(const struct close_record *closed,c
 static inline enum open_result open_execute(int state,int runtime,uid_t owner,uint64_t base_revision,
                                              const char *boot,const struct open_ops *ops) {
     if(!ops||!ops->deny||!ops->stop||!ops->prepare||!ops->release||!ops->verify||!base_revision||
-        base_revision==UINT64_MAX||!gate_boot_valid(boot)||!store_directory_valid(state,owner)||
+        base_revision>=UINT64_MAX-1||!gate_boot_valid(boot)||!store_directory_valid(state,owner)||
         !store_directory_valid(runtime,owner))return OPEN_INVALID;
     int lock=openat(state,"transition.lock",O_RDWR|O_CREAT|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC,0600);
     if(lock<0)return OPEN_IO;

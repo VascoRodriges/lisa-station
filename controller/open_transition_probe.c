@@ -172,6 +172,7 @@ int main(int argc,char **argv){
         open_execute(state,runtime,owner,2,BOOT,&ops)==OPEN_INVALID&&mode_store_boot_choice(state,owner)==LISA_MODE_PAUSED,
         "symlink_open_fence_never_followed");
     CHECK(!reset_fixture(&f,state,runtime,owner)&&open_execute(state,runtime,owner,UINT64_MAX,BOOT,&ops)==OPEN_INVALID&&
+        open_execute(state,runtime,owner,UINT64_MAX-1,BOOT,&ops)==OPEN_INVALID&&
         open_execute(state,runtime,owner,2,"invalid",&ops)==OPEN_INVALID&&!f.deny_calls,"invalid_request_rejected_without_callbacks");
 cleanup:
     gate_release(&lease);if(held>=0)close(held);

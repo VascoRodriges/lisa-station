@@ -22,6 +22,9 @@ Compiled callbacks must reestablish denial, revoke the old permit, stop the
 declared actors (including Lisa voice), and prepare the next marking revision.
 Only then can the matching completed close fence be retired. The executor commits
 the next Alice revision and a permit bound to that revision/current boot. A
+final revision is reserved for a subsequent close: opening refuses a base at
+`UINT64_MAX - 1`, so it cannot create an Alice intent that exhausts the revision
+counter and prevents a later close. A
 policy-release callback and a separate verification must pass before the opening
 fence is removed and its parent directory synchronized. Actual guarded service
 starts happen separately after this completed admission transaction.
@@ -64,7 +67,7 @@ real-Alice return trial.
 
 Qualified ARM SHA256:
 
-- open transaction: `37603a04e9bf28280678d3650bb8d8e5057bd3231f7aa1e60e8dc5c44f42b6c9`
+- open transaction: `5d523e9c05bba36aca958d3ae195296472783acfd4ecefee0e090ddf0523fa1a`
 - startup gate: `c824b6bd8c621c93a2a9d12c5fb7861a483e4f9d6ac1481a94dca3ee6a3ed684`
 
 ```sh
