@@ -6,7 +6,7 @@
 
 static unsigned checks,failures,old_epoch,new_epoch;
 static const char *family_name,*protocol;
-static int recovery_fixture;
+static int recovery_fixture,emergency_fixture;
 static int check(const char *name,int ok){
     ++checks;failures+=!ok;
     printf("{\"event\":\"epoch-check\",\"family\":\"%s\",\"protocol\":\"%s\",\"old_epoch\":%u,\"new_epoch\":%u,\"check\":\"%s\",\"ok\":%s}\n",
@@ -28,7 +28,7 @@ static int pair_create(int family,int type,int mapped,int marked,struct pair *pa
         if(inet_pton(AF_INET6,mapped?"::ffff:127.0.0.1":"::1",&a->sin6_addr)!=1)return -1;}
     int server=socket(family,type|SOCK_CLOEXEC,0);if(server<0)return -1;
     if(bind(server,(struct sockaddr*)&address,size)||getsockname(server,(struct sockaddr*)&address,&size)||
-        (type==SOCK_STREAM&&listen(server,1))||(marked&&setegid(57342))){close(server);return -1;}
+        (type==SOCK_STREAM&&listen(server,1))||(marked&&setegid(marked>1?(gid_t)marked:57342))){close(server);return -1;}
     int client=socket(family,type|SOCK_CLOEXEC,0),restored=!marked||!setegid(0);
     if(client<0||!restored){if(client>=0)close(client);close(server);return -1;}
     if(type==SOCK_STREAM){
@@ -73,6 +73,21 @@ static int run(int family,int type,int mapped){
     if(!command('c'))goto done;
     if(!check("old_closed",blocked(&old,type))||!check("unrelated_closed",transfer(&control,type)))goto done;
     ready("closed",NULL);
+    if(emergency_fixture){
+        if(type!=SOCK_DGRAM)goto done;
+        for(unsigned i=0;i<COMPOSITE_ROLE_COUNT;++i){
+            struct pair extra={-1,-1};char name[48];
+            snprintf(name,sizeof(name),"group_%u_socket",composite_groups[i]);
+            if(!check(name,!pair_create(family,type,mapped,(int)composite_groups[i],&extra)))goto done;
+            snprintf(name,sizeof(name),"group_%u_denied",composite_groups[i]);int denied=blocked(&extra,type);
+            close(extra.client);close(extra.peer);if(!check(name,denied))goto done;
+        }
+        errno=0;ssize_t sent=send(old.peer,"Q",1,MSG_NOSIGNAL);
+        if(!check("old_root_reply_denied",(sent==1||(sent<0&&(errno==EPERM||errno==EACCES)))&&quiet(old.client)))goto done;
+        ready("emergency",NULL);
+        if(!command('r')||!check("old_remains_closed",blocked(&old,type))||!check("unrelated_final",transfer(&control,type)))goto done;
+        result=0;goto done;
+    }
     if(recovery_fixture){
         char byte;
         for(;;){
@@ -142,12 +157,14 @@ int main(int argc,char **argv){
         printf("{\"event\":\"epoch-policy\",\"epoch\":%u,\"closed\":%s,\"ok\":%s}\n",epoch,closed?"true":"false",ok?"true":"false");return ok?0:4;
     }
     if(argc!=6)return 2;
-    recovery_fixture=!strcmp(argv[1],"--own-recovery-epochs");
+    emergency_fixture=!strcmp(argv[1],"--own-emergency");
+    recovery_fixture=!strcmp(argv[1],"--own-recovery-epochs")||emergency_fixture;
     if(!recovery_fixture&&strcmp(argv[1],"--own-epochs"))return 2;
     pid_t parent=getppid();if(prctl(PR_SET_PDEATHSIG,SIGKILL)||getppid()!=parent)return 2;
     old_epoch=number(argv[4]);new_epoch=number(argv[5]);if(!old_epoch||!new_epoch||old_epoch==new_epoch)return 2;
     int mapped=!strcmp(argv[2],"mapped"),family=!strcmp(argv[2],"4")?AF_INET:AF_INET6;
-    if((family==AF_INET6&&!mapped&&strcmp(argv[2],"6"))||(strcmp(argv[3],"tcp")&&strcmp(argv[3],"udp")))return 2;
+    if((family==AF_INET6&&!mapped&&strcmp(argv[2],"6"))||(strcmp(argv[3],"tcp")&&strcmp(argv[3],"udp"))||
+       (emergency_fixture&&strcmp(argv[3],"udp")))return 2;
     alarm(recovery_fixture?90:30);family_name=mapped?"ipv4-mapped-ipv6":family==AF_INET?"ipv4":"ipv6";protocol=argv[3];
     int result=run(family,!strcmp(protocol,"tcp")?SOCK_STREAM:SOCK_DGRAM,mapped);
     printf("{\"event\":\"epoch-summary\",\"family\":\"%s\",\"protocol\":\"%s\",\"old_epoch\":%u,\"new_epoch\":%u,\"checks\":%u,\"failures\":%u,\"audio_opened\":false,\"vendor_processes_changed\":false}\n",

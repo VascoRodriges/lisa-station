@@ -87,8 +87,17 @@ static inline int mode_store_open_pending(int directory, uid_t owner) {
     return errno!=ENOENT;
 }
 
+/* A fault fence is latched independently of the mode/open/close journals.
+ * Presence (including an unsafe object) blocks boot and explicit admission. */
+static inline int mode_store_fault_pending(int directory, uid_t owner) {
+    if (!store_directory_valid(directory, owner)) return 1;
+    struct stat info;
+    if (!fstatat(directory,"fault.request",&info,AT_SYMLINK_NOFOLLOW)) return 1;
+    return errno!=ENOENT;
+}
+
 static inline enum lisa_mode mode_store_boot_choice(int directory, uid_t owner) {
-    if (mode_store_close_pending(directory,owner) || mode_store_open_pending(directory,owner)) return LISA_MODE_PAUSED;
+    if (mode_store_fault_pending(directory,owner) || mode_store_close_pending(directory,owner) || mode_store_open_pending(directory,owner)) return LISA_MODE_PAUSED;
     struct mode_record record;
     return mode_store_read(directory, owner, &record) == STORE_OK ? record.requested : LISA_MODE_PAUSED;
 }
@@ -108,7 +117,8 @@ static inline int store_write_all(int descriptor, const char *data, size_t size)
  * raw intent writers from crossing an explicit opening transaction. */
 static inline enum store_result mode_store_commit_locked(int directory, uid_t owner, uint64_t expected_revision,
                                            enum lisa_mode requested, struct mode_record *committed) {
-    if (!mode_name(requested) || !store_directory_valid(directory, owner)) return STORE_INVALID;
+    if (!mode_name(requested) || !store_directory_valid(directory, owner) ||
+        (requested==LISA_MODE_ALICE && mode_store_fault_pending(directory,owner))) return STORE_INVALID;
     enum store_result result;
     struct mode_record current = {0, LISA_MODE_PAUSED};
     result = mode_store_read(directory, owner, &current);
@@ -138,7 +148,8 @@ static inline enum store_result mode_store_commit_locked(int directory, uid_t ow
 
 static inline enum store_result mode_store_request(int directory, uid_t owner, uint64_t expected_revision,
                                            enum lisa_mode requested, struct mode_record *committed) {
-    if (!mode_name(requested) || !store_directory_valid(directory, owner)) return STORE_INVALID;
+    if (!mode_name(requested) || !store_directory_valid(directory, owner) ||
+        (requested==LISA_MODE_ALICE && mode_store_fault_pending(directory,owner))) return STORE_INVALID;
     int lock = openat(directory, "mode.lock", O_RDWR | O_CREAT | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC, 0600);
     if (lock < 0) return errno == ELOOP ? STORE_INVALID : STORE_IO;
     if (!store_file_valid(lock, owner)) { close(lock); return STORE_INVALID; }

@@ -79,9 +79,9 @@ This watcher is a bounded laboratory process with an SSH parent and a 120-second
 deadline. It is not the permanent PID-1-supervised coordinator. Its CLEAR result
 means only that no journal action is pending; it does not attest to live permits,
 actual packet policy or production actor/FD inventory. A damaged policy owner
-still needs an independently reserved emergency denial path and a durable fault
-latch. Epoch-reader contention and permanent runtime health admission also need
-composition before production deployment.
+now has a separately [qualified emergency path and durable fault latch](EMERGENCY_POLICY.md).
+Its bounded runtime check respects epoch-reader contention. Permanent supervision,
+all journal-fault paths and production runtime admission still need composition.
 
 Actual service migration, platform filesystem/IPC boundaries, boot gates,
 installer and cold-boot acceptance remain unfinished. Lisa in this fixture is

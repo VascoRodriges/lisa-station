@@ -360,7 +360,7 @@ static enum guardian_result arm_labels(int state,int runtime,const char *boot,st
     if(lock<0) return GUARD_BUSY;
     enum guardian_result result=GUARD_DENIED;
     struct mode_record current; char chain[32];
-    if(mode_store_close_pending(state,0)||mode_store_read(state,0,&current)!=STORE_OK||current.requested!=LISA_MODE_ALICE||
+    if(mode_store_fault_pending(state,0)||mode_store_close_pending(state,0)||mode_store_read(state,0,&current)!=STORE_OK||current.requested!=LISA_MODE_ALICE||
         !gate_permit_valid(runtime,0,current.revision,boot)||policy_chain_read(runtime,0,chain,sizeof(chain))||
         !label_policy_marking_verified(chain)) goto done;
     if(!legacy_clear()||(!lab&&!legacy_diagnostics_clear())) { result=GUARD_BUSY; goto done; }
@@ -368,7 +368,7 @@ static enum guardian_result arm_labels(int state,int runtime,const char *boot,st
         struct guardian_record record; char name[32]; snprintf(name,sizeof(name),"%s.child",composite_names[i]);
         if(absent_role(NULL,i)||guardian_read(runtime,0,name,&record)!=1) { result=GUARD_BUSY; goto done; }
     }
-    if(!mode_store_close_pending(state,0)&&gate_permit_valid(runtime,0,current.revision,boot)&&
+    if(!mode_store_fault_pending(state,0)&&!mode_store_close_pending(state,0)&&gate_permit_valid(runtime,0,current.revision,boot)&&
         !label_arm_publish(runtime,0,current.revision,boot,chain)) {
         result=GUARD_OK; started->record.revision=current.revision;
     }

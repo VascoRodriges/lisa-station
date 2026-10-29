@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include "epoch_mutation.h"
 #include "pending_recovery.h"
+#include "emergency_policy.h"
 #define CHECK(x) do{++checks;if(!(x)){fprintf(stderr,"epoch-store draft check line %d\n",__LINE__);return 2;}}while(0)
 static int selftest(const char *base){
  unsigned checks=0;umask(077);char path[256];snprintf(path,sizeof(path),"%s/lisa-epoch-store.XXXXXX",base);CHECK(mkdtemp(path));
@@ -103,6 +104,34 @@ static int recovery_selftest(const char *base){
  printf("{\"selftest\":\"pending-recovery\",\"checks\":%u,\"ok\":true,\"policy_changed\":false,\"audio_opened\":false}\n",checks);return 0;
 }
 #undef CHECK
+#define CHECK(x) do{++checks;if(!(x)){fprintf(stderr,"emergency fixture line %d\n",__LINE__);return 2;}}while(0)
+static int emergency_selftest(const char *base){
+ umask(077);unsigned checks=0;char path[256];snprintf(path,sizeof(path),"%s/lisa-emergency.XXXXXX",base);CHECK(mkdtemp(path));
+ int state=open(path,O_RDONLY|O_DIRECTORY|O_CLOEXEC);CHECK(state>=0);uid_t owner=geteuid();
+ struct epoch_owner scope={.boot="11111111-2222-4333-8444-555555555555",.chain="LISACQ_EMERGENCY",.initial_revision=1};
+ struct emergency_names names;CHECK(!emergency_names(&scope,&names)&&!strcmp(names.group,"LISACE_EMERGENCY")&&!strcmp(names.label,"LISACF_EMERGENCY"));
+ CHECK(emergency_read(state,owner,0,&scope)==1&&!emergency_publish(state,owner,0,&scope));
+ CHECK(!emergency_read(state,owner,0,&scope)&&!emergency_publish(state,owner,0,&scope));
+ struct epoch_owner wrong=scope;wrong.initial_revision=2;CHECK(emergency_publish(state,owner,0,&wrong)<0);
+ wrong=scope;wrong.boot[0]='2';CHECK(emergency_read(state,owner,0,&wrong)<0);
+ CHECK(!put(state,"mode.state","LISA_MODE_V1 2 alice\n")&&mode_store_boot_choice(state,owner)==LISA_MODE_ALICE);
+ CHECK(!emergency_publish(state,owner,1,&scope)&&mode_store_fault_pending(state,owner)&&mode_store_boot_choice(state,owner)==LISA_MODE_PAUSED);
+ struct mode_record mode;CHECK(mode_store_request(state,owner,2,LISA_MODE_ALICE,&mode)==STORE_INVALID);
+ CHECK(mode_store_request(state,owner,2,LISA_MODE_PAUSED,&mode)==STORE_OK&&mode.revision==3);
+ CHECK(!emergency_publish(state,owner,1,&scope)&&!emergency_read(state,owner,1,&scope));
+ CHECK(!put(state,"fault.request","corrupt\n")&&emergency_publish(state,owner,1,&scope)<0&&mode_store_fault_pending(state,owner));
+ CHECK(!unlinkat(state,"fault.request",0)&&!symlinkat("missing",state,"fault.request")&&mode_store_fault_pending(state,owner)&&emergency_publish(state,owner,1,&scope)<0);
+ CHECK(!unlinkat(state,"fault.request",0)&&!mkdirat(state,"fault.request",0700)&&mode_store_fault_pending(state,owner));
+ CHECK(!unlinkat(state,"fault.request",AT_REMOVEDIR));
+ CHECK(!linkat(state,"emergency.owner",state,"alias",0)&&emergency_read(state,owner,0,&scope)<0);
+ CHECK(!unlinkat(state,"alias",0)&&!fchmodat(state,"emergency.owner",0644,0)&&emergency_read(state,owner,0,&scope)<0);
+ CHECK(!fchmodat(state,"emergency.owner",0600,0)&&!emergency_read(state,owner,0,&scope));
+ char expected[1024];CHECK(emergency_expected(&names,0,expected,sizeof(expected))>0&&strstr(expected,"57342")&&strstr(expected,"57345"));
+ CHECK(emergency_expected(&names,1,expected,sizeof(expected))>0&&strstr(expected,"! --mark 0x0/0xff000000 -j DROP"));
+ CHECK(!unlinkat(state,"emergency.owner",0)&&!unlinkat(state,"mode.state",0)&&!unlinkat(state,"mode.lock",0)&&!close(state)&&!rmdir(path));
+ printf("{\"selftest\":\"emergency-policy\",\"checks\":%u,\"ok\":true,\"policy_changed\":false,\"audio_opened\":false}\n",checks);return 0;
+}
+#undef CHECK
 
 static int parser_selftest(void){
 #define VERIFY(x) do{if(!(x)){fprintf(stderr,"epoch mutation parser line %d\n",__LINE__);return 4;}}while(0)
@@ -184,7 +213,7 @@ static int lab_scope_absent(void *pointer){
  }
  closedir(directory);return absent;
 }
-struct lab_context{struct epoch_mutation mutation;int state;unsigned fault,hold;};
+struct lab_context{struct epoch_mutation mutation;struct emergency_cache emergency;int state,emergency_enabled,emergency_closed;unsigned fault,hold;};
 static int lab_flag(int runtime,const char *name,const char *expected){
  int fd=openat(runtime,name,O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC);if(fd<0)return errno==ENOENT?0:-1;
  char text[96];ssize_t used=read(fd,text,sizeof(text));int valid=store_file_valid(fd,0);close(fd);
@@ -233,10 +262,34 @@ static int lab_verify_closed(void *pointer){
   !epoch_mutation_verified(&context->mutation,1)?-1:0;
 }
 
+/* Called only by the optional emergency fixture, never interpreted as a
+ * production actor/FD census. 1 healthy, 0 valid contention, -1 fault. */
+static int lab_health(struct lab_context *context){
+ struct epoch_lease *epoch=context->mutation.lease;struct recovery_lease transition={.descriptor=-1};
+ enum recovery_action action=recovery_lock(context->state,epoch->owner,&transition);
+ if(action==RECOVERY_BUSY)return 0;
+ if(action!=RECOVERY_CLEAR){context->emergency_closed=emergency_activate(&context->emergency,context->state,epoch->runtime)==0;return -1;}
+ errno=0;
+ if(epoch_store_lock(epoch->runtime,epoch->owner,epoch)){
+  int busy=errno==EWOULDBLOCK;
+  if(!busy)context->emergency_closed=emergency_activate(&context->emergency,context->state,epoch->runtime)==0;
+  recovery_unlock(&transition);return busy?0:-1;
+ }
+ struct mode_record mode;struct stat info;
+ int healthy=!epoch_mutation_load(&context->mutation)&&mode_store_read(context->state,epoch->owner,&mode)==STORE_OK;
+ if(healthy&&mode.requested==LISA_MODE_ALICE)healthy=context->mutation.record.phase==EPOCH_OPEN&&
+  mode.revision==context->mutation.record.revision&&epoch_mutation_verified(&context->mutation,0)&&
+  gate_permit_valid(epoch->runtime,epoch->owner,mode.revision,context->mutation.owner.boot)&&!mode_store_fault_pending(context->state,epoch->owner);
+ else if(healthy)healthy=context->mutation.record.phase==EPOCH_CLOSED&&epoch_mutation_verified(&context->mutation,1)&&
+  fstatat(epoch->runtime,"vendor.permit",&info,AT_SYMLINK_NOFOLLOW)<0&&errno==ENOENT;
+ if(!healthy)context->emergency_closed=emergency_activate(&context->emergency,context->state,epoch->runtime)==0;
+ recovery_unlock(&transition);return healthy?1:-1;
+}
 static int lab_watch(struct lab_context *context,unsigned lifetime){
  struct epoch_lease *lease=context->mutation.lease;int runtime=lease->runtime;uid_t owner=lease->owner;
  if(epoch_store_lock(runtime,owner,lease)||epoch_mutation_load(&context->mutation))return -1;
  struct epoch_snapshot snapshot;if(epoch_mutation_snapshot(&context->mutation,&snapshot))return -1;
+ if(context->emergency_enabled&&emergency_reserve(&context->mutation,&context->emergency))return -1;
  epoch_store_unlock(lease);lease->runtime=runtime;lease->owner=owner;
  struct process_stamp stamp;if(process_stamp(getpid(),&stamp))return -1;
  char ready[160];snprintf(ready,sizeof(ready),"LISA_RECOVERY_READY_V1 %s %ld %" PRIu64 "\n",context->mutation.owner.boot,(long)getpid(),stamp.ticks);
@@ -265,7 +318,17 @@ static int lab_watch(struct lab_context *context,unsigned lifetime){
    printf("{\"event\":\"recovery-watch\",\"state\":\"recovered\",\"reason\":\"%s\",\"base_revision\":%" PRIu64 ",\"mode_revision\":%" PRIu64
     ",\"target\":\"%s\",\"policy_closed\":true,\"permit_revoked\":true}\n",
     plan.action==RECOVERY_CANCEL_OPEN?"cancel_open":"finish_close",plan.base_revision,mode.revision,mode_name(mode.requested));fflush(stdout);
-  }else if(result==RECOVERY_FAULT){++faults;break;}else ++idle;
+  }else if(result==RECOVERY_FAULT){++faults;break;}else {
+   ++idle;
+   if(context->emergency_enabled){
+    int health=lab_health(context);
+    if(health<0){
+     int closed=context->emergency_closed;
+     printf("{\"event\":\"emergency-fault\",\"latched\":%s,\"policy_closed\":%s,\"primary_preserved\":true,\"automatic_open\":false}\n",
+      mode_store_fault_pending(context->state,owner)?"true":"false",closed?"true":"false");fflush(stdout);++faults;break;
+    }
+   }
+  }
   if(lease->descriptor>=0){epoch_store_unlock(lease);lease->runtime=runtime;lease->owner=owner;}
   struct timespec delay={0,100000000};nanosleep(&delay,NULL);
  }
@@ -284,12 +347,13 @@ int main(int argc,char **argv){
  if(argc==2&&(!strcmp(argv[1],"--selftest")||!strcmp(argv[1],"--station-selftest"))){
   int station=!strcmp(argv[1],"--station-selftest");if(station&&(getuid()||geteuid()||getgid()||getegid()))return 2;
   alarm(30);const char *base=station?"/data/opt/lisa-controller-lab":"/tmp";
-  return parser_selftest()||selftest(base)||recovery_selftest(base);
+  return parser_selftest()||selftest(base)||recovery_selftest(base)||emergency_selftest(base);
  }
  if(getuid()||geteuid()||getgid()||getegid()||argc<3||argc>5)return 2;
  pid_t parent=getppid();if(prctl(PR_SET_PDEATHSIG,SIGKILL)||getppid()!=parent)return 2;
  int reserve=!strcmp(argv[1],"--lab-reserve"),status=!strcmp(argv[1],"--lab-status"),deny=!strcmp(argv[1],"--lab-deny");
- int holding=!strcmp(argv[1],"--lab-open-hold"),watching=!strcmp(argv[1],"--lab-watch");
+ int holding=!strcmp(argv[1],"--lab-open-hold"),emergency=!strcmp(argv[1],"--lab-watch-emergency");
+ int watching=!strcmp(argv[1],"--lab-watch")||emergency;
  int opening=!strcmp(argv[1],"--lab-open")||holding,closing=!strcmp(argv[1],"--lab-close")||!strcmp(argv[1],"--lab-close-lisa");
  if(!reserve&&!status&&!deny&&!opening&&!closing&&!watching)return 2;
  if((watching&&argc!=4)||(holding&&argc!=5))return 2;
@@ -311,7 +375,7 @@ int main(int argc,char **argv){
  snprintf(path,sizeof(path),"%s/state",argv[2]);int state=lab_directory(path);close(directory);
  if(runtime<0||state<0){if(runtime>=0)close(runtime);if(state>=0)close(state);return 3;}
  alarm(watching?lifetime+5:45);struct epoch_lease lease={.descriptor=-1,.runtime=runtime,.owner=0};int result=-1;
- struct lab_context context={.state=state,.fault=holding||watching?0:(unsigned)fault,.hold=holding?(unsigned)fault:0};
+ struct lab_context context={.state=state,.emergency_enabled=emergency,.fault=holding||watching?0:(unsigned)fault,.hold=holding?(unsigned)fault:0};
  context.mutation.lease=&lease;context.mutation.checkpoint=lab_checkpoint;context.mutation.context=&context;
  struct mode_record mode={0};char chain[32];
  if(policy_chain_read(runtime,0,chain,sizeof(chain)))goto done;
@@ -329,7 +393,12 @@ int main(int argc,char **argv){
  else if(deny)result=epoch_mutation_deny(&context.mutation)||close_revoke(runtime)?-1:0;
  else if(opening){
   struct open_ops ops={lab_deny,lab_stop,lab_prepare,lab_release,lab_verify_open,NULL,&context};
-  result=open_execute(state,runtime,0,base,boot,&ops)==OPEN_OK?0:-1;
+  enum open_result opened=OPEN_BUSY;
+  for(unsigned attempt=0;attempt<100&&opened==OPEN_BUSY;++attempt){
+   opened=open_execute(state,runtime,0,base,boot,&ops);
+   if(opened==OPEN_BUSY){struct timespec delay={0,50000000};nanosleep(&delay,NULL);}
+  }
+  result=opened==OPEN_OK?0:-1;
  }else if(closing){
   struct close_ops ops={lab_deny,lab_stop,lab_verify_closed,NULL,&context};
   result=close_execute(state,runtime,0,base,!strcmp(argv[1],"--lab-close-lisa")?LISA_MODE_LISA:LISA_MODE_PAUSED,&ops)==CLOSE_OK?0:-1;

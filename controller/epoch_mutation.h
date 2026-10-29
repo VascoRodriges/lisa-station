@@ -227,7 +227,7 @@ static inline int epoch_mutation_release(struct epoch_mutation *mutation,int sta
     struct mode_record mode;struct open_record opening;uid_t owner=mutation->lease->owner;
     if(mode_store_read(state,owner,&mode)!=STORE_OK||mode.requested!=LISA_MODE_ALICE||mode.revision!=mutation->record.revision||
         open_read(state,owner,&opening)||opening.phase!=OPEN_PERMITTED||opening.base_revision+1!=mode.revision||
-        strcmp(opening.boot,mutation->owner.boot)||mode_store_close_pending(state,owner)||
+        strcmp(opening.boot,mutation->owner.boot)||mode_store_fault_pending(state,owner)||mode_store_close_pending(state,owner)||
         !gate_permit_valid(mutation->lease->runtime,owner,mode.revision,mutation->owner.boot))return -1;
     struct label_policy_names names;if(label_policy_names(mutation->owner.chain,&names)||epoch_mutation_phase(mutation,EPOCH_OPENING))return -1;
     for(unsigned family=0;family<2;++family){

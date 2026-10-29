@@ -145,3 +145,10 @@ leases, cancels an abandoned opening and finishes an abandoned close with its
 original target. A worker-independent kernel trial passes with retired-flow
 denial and working unrelated controls. This is a bounded laboratory process;
 permanent supervision, fault latching, runtime admission and installation remain.
+
+The [emergency policy adapter](EMERGENCY_POLICY.md) now pre-reserves separate
+selective barriers and latches a durable fault after primary-policy journal
+corruption. Its own-flow trial closes old/new service sockets while preserving
+unrelated controls; restored primary bytes cannot bypass the retained fault.
+Permanent supervision, restart reconstruction, all fault paths and explicit
+repair remain required before production installation.

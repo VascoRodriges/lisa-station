@@ -72,7 +72,7 @@ static void checkpoint(void *pointer,enum open_phase phase){
 }
 static int closed_callback(void *pointer){(void)pointer;return 0;}
 static int reset_fixture(struct fixture *f,int state,int runtime,uid_t owner){
-    const char *names[]={"opening.request","closed.request","transition.lock","mode.state","mode.lock"};
+    const char *names[]={"opening.request","closed.request","fault.request","transition.lock","mode.state","mode.lock"};
     for(unsigned i=0;i<sizeof(names)/sizeof(names[0]);++i)if(unlinkat(state,names[i],0)&&errno!=ENOENT)return -1;
     if(unlinkat(runtime,"vendor.permit",0)&&errno!=ENOENT)return -1;
     *f=(struct fixture){.state=state,.runtime=runtime,.owner=owner,.revision=3,.boot=BOOT,.crash_phase=-1};
@@ -185,10 +185,15 @@ int main(int argc,char **argv){
     CHECK(!reset_fixture(&f,state,runtime,owner)&&open_execute(state,runtime,owner,UINT64_MAX,BOOT,&ops)==OPEN_INVALID&&
         open_execute(state,runtime,owner,UINT64_MAX-1,BOOT,&ops)==OPEN_INVALID&&
         open_execute(state,runtime,owner,2,"invalid",&ops)==OPEN_INVALID&&!f.deny_calls,"invalid_request_rejected_without_callbacks");
+    CHECK(!reset_fixture(&f,state,runtime,owner)&&!fixture_write(state,"fault.request","damaged\n")&&
+        open_execute(state,runtime,owner,2,BOOT,&ops)==OPEN_RECOVERY&&!f.deny_calls&&!f.prepare_calls&&
+        mode_store_boot_choice(state,owner)==LISA_MODE_PAUSED,"latched_fault_refuses_explicit_open_without_mutating_it");
+    CHECK(!unlinkat(state,"fault.request",0)&&!symlinkat("missing",state,"fault.request")&&
+        open_execute(state,runtime,owner,2,BOOT,&ops)==OPEN_RECOVERY,"unsafe_fault_also_refuses_explicit_open");
 cleanup:
     gate_release(&lease);if(held>=0)close(held);
     if(runtime>=0){unlinkat(runtime,"vendor.permit",0);close(runtime);}
-    if(state>=0){const char *names[]={"opening.request","closed.request","transition.lock","mode.state","mode.lock"};
+    if(state>=0){const char *names[]={"opening.request","closed.request","fault.request","transition.lock","mode.state","mode.lock"};
         for(unsigned i=0;i<sizeof(names)/sizeof(names[0]);++i)unlinkat(state,names[i],0);
         close(state);}
     unlinkat(directory,"run",AT_REMOVEDIR);unlinkat(directory,"state",AT_REMOVEDIR);close(directory);int removed=!rmdir(path);

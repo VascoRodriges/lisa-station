@@ -114,6 +114,7 @@ static inline enum open_result open_execute(int state,int runtime,uid_t owner,ui
     if(flock(lock,LOCK_EX|LOCK_NB)){close(lock);return OPEN_BUSY;}
     enum open_result result=OPEN_INVALID;int mode_lock=-1,published=0,supersede=0;
     struct open_record previous,pending={.base_revision=base_revision,.phase=OPEN_REQUESTED};memcpy(pending.boot,boot,37);
+    if(mode_store_fault_pending(state,owner)){result=OPEN_RECOVERY;goto done;}
     int existing=open_read(state,owner,&previous);
     if(existing<0){open_safety_attempt(runtime,ops);goto done;}
     mode_lock=openat(state,"mode.lock",O_RDWR|O_CREAT|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC,0600);
