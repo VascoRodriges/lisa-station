@@ -1,6 +1,5 @@
-/* Closed bootstrap coordinator. No Alice permit publication, stock fallback,
- * firmware/init write or device-wide ban. The independent mixer is implemented;
- * DNS/time and vendor handlers follow separately. */
+/* Boot coordinator. Independent local services never publish an Alice permit,
+ * fall back to stock services, write firmware or impose a device-wide ban. */
 #define _GNU_SOURCE
 #include <sys/statvfs.h>
 #include "boot_ledger.h"
@@ -145,7 +144,7 @@ static int hardware_operation(int runtime,const char *runtime_path,const char *b
     return 1;
 }
 int main(int argc,char **argv) {
-    if(geteuid()||argc<2||argc>3) return 2;
+    if(getuid()||geteuid()||getgid()||getegid()||argc<2||argc>3) return 2;
     int hardware=!strcmp(argv[1],"--hardware-start")||!strcmp(argv[1],"--lab-hardware-start")?1:
         !strcmp(argv[1],"--hardware-status")||!strcmp(argv[1],"--lab-hardware-status")?2:
         !strcmp(argv[1],"--hardware-stop")||!strcmp(argv[1],"--lab-hardware-stop")?3:
@@ -194,18 +193,43 @@ int main(int argc,char **argv) {
         int valid=installed(base); close(base); if(!valid) goto done;
         strcpy(state_path,"/bkupgrade/data/opt/lisa-station/state"); strcpy(runtime_path,"/run/lisa-station");
     }
+    if(hardware||dns||clock_service){
+        /* Local services depend on the trusted installation/profile, not on a
+         * vendor permit, valid mode record or completed vendor firewall setup. */
+        int operation=hardware?hardware:dns?dns:clock_service;
+        if((operation==1||operation==4)&&mkdir(runtime_path,0700)&&errno!=EEXIST)goto done;
+        runtime=boot_directory(runtime_path);if(runtime<0)goto done;
+        lock=boot_lock(runtime,"boot.lock",status);
+        if(lock<0){result="busy";goto done;}
+        state=boot_directory(state_path);
+        if(state>=0&&mode_store_read(state,0,&mode)==STORE_OK)requested=mode_name(mode.requested);
+        observed=!process_scope(&legacy,&tagged,runtime_path,boot);
+        /* Optional observations cannot grant a vendor startup or certify
+         * privacy; missing/corrupt policy is not an auxiliary-service outage. */
+        if(!policy_chain_read(runtime,0,chain,sizeof(chain))){
+            struct label_policy_names names;
+            ownership=boot_ledger_read(runtime,0,0,boot,chain)==0;
+            ready=ownership&&boot_ledger_read(runtime,0,1,boot,chain)==0&&!label_policy_names(chain,&names)&&
+                label_policy_verified(chain)&&!boot_policy_foreign_writers(&names,0);
+        }
+        const char *base=lab?argv[2]:"/bkupgrade/data/opt/lisa-station";
+        if(hardware){completed=hardware_operation(runtime,runtime_path,boot,hardware,lab);hardware_ok=completed?"true":"false";}
+        if(dns){completed=network_dns_operation(runtime,runtime_path,base,boot,dns,lab);dns_ok=completed?"true":"false";}
+        if(clock_service){completed=time_operation(runtime,runtime_path,base,boot,clock_service,lab);clock_ok=completed?"true":"false";}
+        result=completed?"ok":"denied";goto done;
+    }
     state=boot_directory(state_path);
     if(state<0) goto done;
     mode_lock=boot_lock(state,"mode.lock",status);
     if(mode_lock<0) { result="busy"; goto done; }
     if(mode_store_read(state,0,&mode)!=STORE_OK) goto done;
     requested=mode_name(mode.requested);
-    if((mode.requested==LISA_MODE_ALICE&&!hardware&&!dns&&!clock_service)||process_scope(&legacy,&tagged,runtime_path,boot)) goto done;
+    if(mode.requested==LISA_MODE_ALICE||process_scope(&legacy,&tagged,runtime_path,boot)) goto done;
     observed=1;
-    if(!hardware&&!dns&&!clock_service&&(tagged||(!lab&&legacy))) goto done;
+    if(tagged||(!lab&&legacy)) goto done;
     if(!lab&&!status) { if(mkdir(runtime_path,0700)&&errno!=EEXIST) goto done; }
     runtime=boot_directory(runtime_path);
-    if(runtime<0||(!hardware&&!dns&&!clock_service&&!no_runtime_actors(runtime))) goto done;
+    if(runtime<0||!no_runtime_actors(runtime)) goto done;
     lock=boot_lock(runtime,"boot.lock",status);
     if(lock<0) { result="busy"; goto done; }
     if((!lab&&production_chain(runtime,status))||policy_chain_read(runtime,0,chain,sizeof(chain))||(!lab&&strcmp(chain,"LISACQ_BOOT"))) goto done;
@@ -214,24 +238,6 @@ int main(int argc,char **argv) {
     ownership=owner==0;
     struct label_policy_names names;
     if(label_policy_names(chain,&names)) goto done;
-    if(hardware){
-        ready=ownership&&complete==0&&label_policy_verified(chain)&&!boot_policy_foreign_writers(&names,0);
-        if(!ready&&hardware<3)goto done;
-        completed=hardware_operation(runtime,runtime_path,boot,hardware,lab);
-        hardware_ok=completed?"true":"false";result=completed?"ok":"denied";goto done;
-    }
-    if(dns){
-        ready=ownership&&complete==0&&label_policy_verified(chain)&&!boot_policy_foreign_writers(&names,0);
-        if(!ready&&dns!=3)goto done;
-        completed=network_dns_operation(runtime,runtime_path,lab?argv[2]:"/bkupgrade/data/opt/lisa-station",boot,dns,lab);
-        dns_ok=completed?"true":"false";result=completed?"ok":"denied";goto done;
-    }
-    if(clock_service){
-        ready=ownership&&complete==0&&label_policy_verified(chain)&&!boot_policy_foreign_writers(&names,0);
-        if(!ready&&clock_service!=3)goto done;
-        completed=time_operation(runtime,runtime_path,lab?argv[2]:"/bkupgrade/data/opt/lisa-station",boot,clock_service,lab);
-        clock_ok=completed?"true":"false";result=completed?"ok":"denied";goto done;
-    }
     if(status) {
         ready=ownership&&complete==0&&label_policy_verified(chain)&&!boot_policy_foreign_writers(&names,0);
         result=ready?"ok":"denied";completed=ready;goto done;

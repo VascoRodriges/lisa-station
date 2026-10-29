@@ -315,7 +315,7 @@ static inline void guardian_run(int state, int runtime, uid_t owner, const char 
             int peer = accept4(control, NULL, NULL, SOCK_CLOEXEC | SOCK_NONBLOCK);
             if (peer >= 0) {
                 struct ucred credentials; socklen_t size=sizeof(credentials); char command[2];
-                if (!getsockopt(peer, SOL_SOCKET, SO_PEERCRED, &credentials, &size) && credentials.uid == owner &&
+                if (!getsockopt(peer, SOL_SOCKET, SO_PEERCRED, &credentials, &size) && credentials.uid == owner && credentials.gid == getegid() &&
                     guardian_readable(peer, 200) && recv(peer, command, sizeof(command), MSG_TRUNC) == 1 && command[0] == 'S') {
                     stop_client=peer; break;
                 }
@@ -408,7 +408,7 @@ static inline enum guardian_result guardian_stop(int runtime, uid_t owner, const
     enum guardian_result result=GUARD_RECOVERY;
     struct ucred peer; socklen_t length=sizeof(peer); char response;
     if (!connect(fd,(struct sockaddr*)&address,sizeof(address)) &&
-        !getsockopt(fd,SOL_SOCKET,SO_PEERCRED,&peer,&length) && peer.uid==owner && peer.pid==expected.guardian &&
+        !getsockopt(fd,SOL_SOCKET,SO_PEERCRED,&peer,&length) && peer.uid==owner && peer.gid==getegid() && peer.pid==expected.guardian &&
         process_live(peer.pid,expected.guardian_ticks) &&
         send(fd,"S",1,MSG_NOSIGNAL)==1 && guardian_readable(fd,4000) && recv(fd,&response,1,0)==1 && response=='S') result=GUARD_OK;
     close(fd); return result;

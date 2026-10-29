@@ -38,7 +38,7 @@ static inline enum guardian_result auxiliary_status(int runtime,uid_t owner,cons
     if(fd<0) return GUARD_FAILED;
     struct ucred peer; socklen_t size=sizeof(peer); char response;
     int valid=!connect(fd,(struct sockaddr*)&address,sizeof(address))&&
-        !getsockopt(fd,SOL_SOCKET,SO_PEERCRED,&peer,&size)&&peer.uid==owner&&peer.pid==record->guardian&&
+        !getsockopt(fd,SOL_SOCKET,SO_PEERCRED,&peer,&size)&&peer.uid==owner&&peer.gid==getegid()&&peer.pid==record->guardian&&
         process_live(peer.pid,record->guardian_ticks)&&send(fd,"Q",1,MSG_NOSIGNAL)==1&&
         guardian_readable(fd,500)&&recv(fd,&response,1,0)==1&&response=='R'&&
         guardian_exec_observed(record->child,record->child_ticks,&expected,spec);
@@ -103,7 +103,7 @@ static inline void auxiliary_run(int runtime,uid_t owner,const char *boot,const 
             int peer=accept4(control,NULL,NULL,SOCK_CLOEXEC|SOCK_NONBLOCK);
             if(peer<0) continue;
             struct ucred credentials;socklen_t size=sizeof(credentials);char command[2];
-            if(!getsockopt(peer,SOL_SOCKET,SO_PEERCRED,&credentials,&size)&&credentials.uid==owner&&
+            if(!getsockopt(peer,SOL_SOCKET,SO_PEERCRED,&credentials,&size)&&credentials.uid==owner&&credentials.gid==getegid()&&
                 guardian_readable(peer,100)&&recv(peer,command,sizeof(command),MSG_TRUNC)==1) {
                 if(command[0]=='S') {stop_client=peer;break;}
                 if(command[0]=='Q') {

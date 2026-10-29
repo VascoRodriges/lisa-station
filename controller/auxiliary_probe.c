@@ -26,6 +26,16 @@ static int filter_checks(void){
     return 0;
 }
 static int reap(pid_t pid){int status;return waitpid(pid,&status,0)==pid&&WIFEXITED(status)&&!WEXITSTATUS(status);}
+static int cross_group_client(int runtime,uid_t owner,const char *boot,const struct guardian_spec *spec) {
+    if(setgid(57342))return 1;
+    struct guardian_record record;
+    if(auxiliary_status(runtime,owner,boot,spec,&record)==GUARD_OK)return 2;
+    struct sockaddr_un address;if(guardian_address(runtime,"hardware.control",&address))return 3;
+    int fd=socket(AF_UNIX,SOCK_SEQPACKET|SOCK_CLOEXEC|SOCK_NONBLOCK,0);if(fd<0)return 4;
+    if(connect(fd,(struct sockaddr*)&address,sizeof(address))||send(fd,"S",1,MSG_NOSIGNAL)!=1||!guardian_readable(fd,500)){close(fd);return 5;}
+    char response;ssize_t bytes=recv(fd,&response,1,0);close(fd);
+    return bytes==1?6:0;
+}
 int main(int argc,char **argv){
     if(argc==2&&!strcmp(argv[1],"--fixture")){for(;;)pause();}
     if(argc!=1)return 2;
@@ -65,6 +75,10 @@ int main(int argc,char **argv){
     CHECK(repeat.result==GUARD_OK&&repeat.record.guardian==first.record.guardian&&repeat.record.child==first.record.child);
     CHECK(auxiliary_status(runtime,owner,"21111111-2222-4333-8444-555555555555",&spec,&observed)==GUARD_RECOVERY);
     CHECK(process_live(first.record.child,first.record.child_ticks));
+    if(!geteuid()){
+        pid_t client=fork();CHECK(client>=0);if(!client)_exit(cross_group_client(runtime,owner,boot,&spec));
+        CHECK(reap(client));CHECK(auxiliary_status(runtime,owner,boot,&spec,&observed)==GUARD_OK);
+    }
     CHECK(guardian_stop(runtime,owner,boot,&spec)==GUARD_OK);
     CHECK(reap(first.record.guardian));
     CHECK(!process_live(first.record.child,first.record.child_ticks));

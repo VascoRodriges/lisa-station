@@ -26,9 +26,11 @@ only its own unreaped child and process group, then reaps that child.
 The exported dispatcher retains ordinary init ordering and isolated sourcing
 of reviewed `.sh` scripts. It routes the ALSA hardvolume daemon, audio monitor,
 clock, resolver and main vendor startup through the fixed runner. Failed
-bootstrap suppresses subsequent gated calls. Bootstrap runs only after successful
+bootstrap suppresses vendor and diagnostics calls; mixer, clock and DNS are
+still attempted through their guarded handlers. Bootstrap runs only after successful
 normal loopback initialization, before Wi-Fi and the first gated service; a
-missing or failed loopback stage keeps the gates closed. A failed gated call never invokes
+missing or failed loopback stage keeps vendor gates closed while local services
+remain independent. A failed gated call never invokes
 the original script. Existing network initialization still runs, and the
 unchanged independent SSH init is called before the first gated service as well
 as at its usual position. The coordinator's actual ready/mode state must be
@@ -52,7 +54,8 @@ uses the actual exported script, real BusyBox shell and bounded runner in a
 private mount namespace/chroot with synthetic init scripts. Normal startup,
 failed bootstrap, missing runner, failing stage handlers and a hanging bootstrap
 all preserve synthetic recovery and prevent original vendor fallbacks. Failed
-and missing loopback initialization also keep the gates closed. Sourced
+and missing loopback initialization also keep vendor gates closed while still
+attempting mixer, clock and resolver. Sourced
 script variables do not leak to later init entries. No real init script, audio
 device, network service or hardware setup is executed. The firmware's set-ID
 BusyBox is copied as a plain private executable for this fixture; production
@@ -66,9 +69,9 @@ passed **597 tests**; with the coordinator/state probe the native matrix is 29.
 
 Qualified digests:
 
-- station-init: `f1610a0c9dcdface590b0549a490dd25ece55f9315b9bb95f78111495cd858b2`
+- station-init: `ef14d81afe9578e026ad197bde25e46bf3c7e8a5ccf85ed268a09b729fc2010c`
 - runner probe: `c031c81bedb5eedd395070f6dbcb3a796e339c5fdb4b41f72931bffd997f830c`
-- dispatcher probe: `08a2e909d87b430ccf6d6014f0d177fda875cfbdf00b3c23153918fd8c04be4b`
+- dispatcher probe: `d0e57bb10e77ec656787b174fb8f39c5b0930d0d981df6d8ebd2ca04113778a1`
 
 ```sh
 python controller/build.py --target station-init
@@ -78,7 +81,8 @@ python controller/build.py --target boot-dispatch-probe
 
 ## Deployment still required
 
-Complete independent boot-failure handling and mode composition; the closed
+Independent [boot-failure handling](AUXILIARY_BOOT.md) is now qualified.
+Complete mode composition; the closed
 bootstrap, constrained mixer, [resolver](INDEPENDENT_DNS.md) and
 [clock](INDEPENDENT_TIME.md) are qualified separately. Bind every vendor admission to
 the verified current boot and explicit intent. Prepare an immutable private

@@ -30,8 +30,8 @@ refuses any other live chronyd rather than running two clock controllers.
 Missing or malformed profiles never select the old configuration. A bad new
 profile does not kill a healthy existing clock process. Production has no lab
 lifetime limit and no HA/NAS or vendor-permit dependency within its supervisor.
-The current coordinator entry still requires the owned closed bootstrap policy;
-decoupling that entry and the dispatcher is the next boot-composition step.
+The coordinator and dispatcher now allow [independent operation](AUXILIARY_BOOT.md)
+without valid vendor mode or policy state; production deployment remains pending.
 
 ## Fixed profile
 

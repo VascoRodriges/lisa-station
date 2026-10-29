@@ -51,9 +51,9 @@ not identify the organization operating a server.
 Start is serialized and idempotent. Stop uses the root-authenticated guardian
 channel instead of signalling a PID from a file. Missing or invalid profiles do
 not select stock defaults. A changed invalid profile also does not kill an
-already running independent service. The current coordinator entry still
-requires its owned closed bootstrap policy; independent boot dispatch during a
-vendor-bootstrap failure and opened Alice mode remain deployment work.
+already running independent service. The coordinator and dispatcher now allow [independent operation](AUXILIARY_BOOT.md)
+even with missing/corrupt mode or vendor policy. Production mode composition
+and installation remain pending.
 
 ## Evidence
 

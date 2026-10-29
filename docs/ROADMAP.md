@@ -114,3 +114,8 @@ The [independent clock handler](INDEPENDENT_TIME.md) now limits chronyd to
 SYS_TIME and a private filesystem. A single-controller handoff selected an NTP
 source, recorded successful kernel adjustments and restored stock time.
 Independent boot failure handling, Alice return and installation remain pending.
+
+The [independent boot path](AUXILIARY_BOOT.md) now keeps mixer, DNS and time
+admission separate from vendor mode/policy failures. A real resolver trial passed
+with absent/corrupt state and a busy mode lock; the dispatcher still denies vendor
+fallbacks. Explicit Alice return, installation and composed acceptance remain pending.

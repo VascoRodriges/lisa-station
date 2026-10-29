@@ -77,10 +77,11 @@ static int fixture_case(const char *root,const char *self,unsigned mode) {
     if(bytes<0||bytes==(ssize_t)sizeof(actual)-1) return 18;
     actual[bytes]=0;
     const char *normal="SYSTEM:start\nSOURCE_ISOLATED\nLOOPBACK:start\n--bootstrap\nRECOVERY:start\n--hardware-start\n--diagnostics-stage\n--time-start\n--dns-start\n--vendor-start\nRECOVERY:start\n";
-    const char *closed="SYSTEM:start\nSOURCE_ISOLATED\nLOOPBACK:start\n--bootstrap\nRECOVERY:start\nRECOVERY:start\n";
+    const char *closed="SYSTEM:start\nSOURCE_ISOLATED\nLOOPBACK:start\n--bootstrap\nRECOVERY:start\n--hardware-start\n--time-start\n--dns-start\nRECOVERY:start\n";
     const char *missing="SYSTEM:start\nSOURCE_ISOLATED\nLOOPBACK:start\nRECOVERY:start\nRECOVERY:start\n";
-    const char *no_loopback="SYSTEM:start\nSOURCE_ISOLATED\nRECOVERY:start\nRECOVERY:start\n";
-    return strcmp(actual,mode==6?no_loopback:(mode==2||mode==5)?missing:(mode==1||mode==4)?closed:normal)?19:0;
+    const char *failed_loopback="SYSTEM:start\nSOURCE_ISOLATED\nLOOPBACK:start\nRECOVERY:start\n--hardware-start\n--time-start\n--dns-start\nRECOVERY:start\n";
+    const char *no_loopback="SYSTEM:start\nSOURCE_ISOLATED\nRECOVERY:start\n--hardware-start\n--time-start\n--dns-start\nRECOVERY:start\n";
+    return strcmp(actual,mode==6?no_loopback:mode==5?failed_loopback:mode==2?missing:(mode==1||mode==4)?closed:normal)?19:0;
 }
 int main(int argc,char **argv) {
     if(argc==3&&!strcmp(argv[1],"--fixture-stage")) return fixture_stage(argv[2]);

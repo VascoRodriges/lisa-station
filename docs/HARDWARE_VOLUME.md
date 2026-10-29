@@ -1,8 +1,8 @@
 # Independent hardware volume
 
 The staged coordinator now implements fixed hardware start/status/stop handlers
-for the verified Station Midi mixer. **No real boot hook is installed.** DNS,
-time, explicit Alice return and the installer remain incomplete; the HA release
+for the verified Station Midi mixer. **No real boot hook is installed.** Explicit
+Alice return and the installer remain incomplete; the HA release
 still provides diagnostics rather than a production mode switch.
 
 ## Local adapter
@@ -29,8 +29,8 @@ start and a root-authenticated UNIX control channel. Repeating start returns
 the verified existing actor. Stop contacts its authenticated guardian, never
 signals an arbitrary journal PID. Guardian death kills its child; child process
 creation is forbidden. It does not read a vendor permit or depend on HA/NAS.
-Current coordinator entry requires installed ownership/closed policy; opening
-real Alice mode remains a separate unfinished transition.
+The coordinator now permits [independent startup](AUXILIARY_BOOT.md) without
+valid vendor state or policy; opening real Alice mode remains a separate unfinished transition.
 
 ALSA software controls can survive their daemon. After proving no mixer daemon
 exists, startup snapshots and removes only the compatible unlocked **user**
@@ -70,4 +70,4 @@ hardware. Python/HA tests passed **620**; the native matrix now has **30** targe
 
 Ordinary Alice runs outside this guard after the lab cleanup. This component is
 not a whole-speaker isolation claim. Boot installation, cold/power-loss tests,
-independent DNS/time and guarded vendor/voice/mode composition are still pending.
+guarded vendor/voice/mode composition and permanent installation are still pending.
