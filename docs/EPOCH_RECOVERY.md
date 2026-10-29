@@ -86,8 +86,8 @@ HA/NAS, is still required. The bounded cleanup watchdog was prepared but not
 fault-injected here. The new adapter's close/reservation mutation checkpoints
 have not received the same complete SIGKILL matrix as opening.
 
-Closed-to-closed mode changes and cancellation of an early opening still need
-completed-close journal rollover. Production actor/FD census, platform private
+[Closed-mode changes and early cancellation](CLOSED_MODES.md) now have completed
+close journal rollover and a separate composed trial. Production actor/FD census, platform private
 filesystem/IPC boundaries, actual vendor admission, boot/direct-init gates,
 installer and power-loss acceptance also remain. Neither this lab component nor
 its mode names certify whole-device isolation or enable the HA mode selector.

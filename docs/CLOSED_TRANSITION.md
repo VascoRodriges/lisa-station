@@ -43,6 +43,10 @@ to Alice needs a future explicit controller operation that validates all
 profiles and prerequisites under the same transition serialization. There is
 no automatic Alice rollback or open operation in this engine.
 
+The later [closed-mode rollover](CLOSED_MODES.md) also supports a new explicit
+closed request after a matching completed fence. Replacement is atomic and an
+early cancelled opening loses its old expected revision.
+
 ## Scoped device trial
 
 `qualify_guardian_startup --exercise-closed-policy` temporarily installs a unique

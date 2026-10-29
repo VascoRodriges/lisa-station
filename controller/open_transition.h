@@ -100,8 +100,7 @@ static inline void open_safety_attempt(int runtime,const struct open_ops *ops) {
     (void)ops->deny(ops->context);(void)close_revoke(runtime);(void)ops->stop(ops->context);
 }
 static inline int open_closed_record_matches(const struct close_record *closed,const struct mode_record *mode) {
-    return closed->phase==CLOSE_COMPLETE&&closed->base_revision<UINT64_MAX&&
-        closed->base_revision+1==mode->revision&&closed->target==mode->requested&&mode->requested!=LISA_MODE_ALICE;
+    return close_completed_matches(closed,mode);
 }
 
 static inline enum open_result open_execute(int state,int runtime,uid_t owner,uint64_t base_revision,

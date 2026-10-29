@@ -134,3 +134,8 @@ The [journalled policy adapter](EPOCH_RECOVERY.md) now composes real packet rule
 with the opening/closing intent engines. Its 32 interrupted-opening cases keep
 retired flows denied and require an explicit retry. Autonomous local recovery,
 closed-mode journal rollover and production role/boot composition remain pending.
+
+The [closed-mode rollover](CLOSED_MODES.md) now changes Lisa/Paused intent without
+an unfenced interval and invalidates an early cancelled opener. Native crash
+fixtures and a composed kernel trial pass. Autonomous recovery and production
+actor/voice/boot installation remain required.

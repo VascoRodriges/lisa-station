@@ -140,6 +140,17 @@ int main(int argc,char **argv){
     f.failure=0;f.revision=5;f.boot=NEXT_BOOT;
     CHECK(open_execute(state,runtime,owner,4,NEXT_BOOT,&ops)==OPEN_OK&&!f.bad&&gate_permit_valid(runtime,owner,5,NEXT_BOOT),
         "new_explicit_request_can_supersede_only_after_completed_close");
+    CHECK(!reset_fixture(&f,state,runtime,owner),"prepare_early_open_cancellation");f.failure=3;
+    CHECK(open_execute(state,runtime,owner,2,BOOT,&ops)==OPEN_PREPARE&&mode_store_open_pending(state,owner),
+        "early_open_failed_before_old_close_fence_retirement");
+    CHECK(close_execute(state,runtime,owner,2,LISA_MODE_PAUSED,&close_ops)==CLOSE_OK&&
+        mode_store_read(state,owner,&mode)==STORE_OK&&mode.revision==3&&mode.requested==LISA_MODE_PAUSED&&
+        mode_store_open_pending(state,owner),"explicit_cancel_advances_unchanged_closed_intent");
+    CHECK(open_execute(state,runtime,owner,2,BOOT,&ops)==OPEN_CONFLICT&&mode_store_boot_choice(state,owner)==LISA_MODE_PAUSED,
+        "cancelled_open_cannot_retry_stale_revision");
+    f.failure=0;f.revision=4;
+    CHECK(open_execute(state,runtime,owner,3,BOOT,&ops)==OPEN_OK&&!f.bad&&gate_permit_valid(runtime,owner,4,BOOT),
+        "fresh_explicit_open_after_early_cancellation");
     CHECK(!reset_fixture(&f,state,runtime,owner)&&!unlinkat(state,"closed.request",0)&&
         open_execute(state,runtime,owner,2,BOOT,&ops)==OPEN_OK&&!f.bad,"initial_closed_intent_without_old_close_journal");
     CHECK(open_execute(state,runtime,owner,3,BOOT,&ops)==OPEN_CONFLICT,"open_is_never_implicit_alice_restart");

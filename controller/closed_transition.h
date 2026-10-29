@@ -55,11 +55,23 @@ static inline int close_read(int state,uid_t owner,struct close_record *record) 
     *record=next; return 0;
 }
 
+static inline int close_completed_matches(const struct close_record *closed,const struct mode_record *mode) {
+    return closed->phase==CLOSE_COMPLETE&&closed->base_revision<UINT64_MAX&&
+        closed->base_revision+1==mode->revision&&closed->target==mode->requested&&mode->requested!=LISA_MODE_ALICE;
+}
+
 static inline int close_publish(int state,uid_t owner,const struct close_record *record) {
     struct close_record previous;
     int existing=close_read(state,owner,&previous);
-    if(existing<0 || (existing==1 && record->phase!=CLOSE_REQUESTED) ||
-        (!existing && (previous.base_revision!=record->base_revision || previous.target!=record->target))) return -1;
+    if(existing<0 || (existing==1 && record->phase!=CLOSE_REQUESTED)) return -1;
+    if(!existing&&(previous.base_revision!=record->base_revision||previous.target!=record->target)) {
+        struct mode_record mode;
+        /* A new explicit closed request atomically replaces only a completed
+         * fence matching the current closed intent. There is no unfenced gap.
+         * Advancing even an unchanged target invalidates a cancelled opener. */
+        if(record->phase!=CLOSE_REQUESTED||mode_store_read(state,owner,&mode)!=STORE_OK||
+            mode.revision!=record->base_revision||!close_completed_matches(&previous,&mode))return -1;
+    }
     char text[160],temporary[64]; uint64_t nonce;
     int size=close_format(text,sizeof(text),record);
     if(size<0 || size>=(int)sizeof(text) || getrandom(&nonce,sizeof(nonce),0)!=(ssize_t)sizeof(nonce)) return -1;
@@ -119,7 +131,13 @@ static inline enum close_result close_execute(int state,int runtime,uid_t owner,
             result=CLOSE_IO; close_safety_attempt(runtime,ops); goto done;
         }
     } else if(pending.base_revision!=base_revision || pending.target!=target) {
-        result=CLOSE_CONFLICT; close_safety_attempt(runtime,ops); goto done;
+        if(current.revision!=base_revision||!close_completed_matches(&pending,&current)){
+            result=CLOSE_CONFLICT; close_safety_attempt(runtime,ops); goto done;
+        }
+        pending=(struct close_record){base_revision,target,CLOSE_REQUESTED};
+        if(close_checkpoint(state,owner,&pending,CLOSE_REQUESTED,ops)){
+            result=CLOSE_IO;close_safety_attempt(runtime,ops);goto done;
+        }
     }
     if(ops->deny(ops->context)) { result=CLOSE_POLICY; close_safety_attempt(runtime,ops); goto done; }
     if(close_checkpoint(state,owner,&pending,CLOSE_DENIED,ops)) { result=CLOSE_IO; goto failed; }

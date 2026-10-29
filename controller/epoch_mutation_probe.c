@@ -174,7 +174,7 @@ int main(int argc,char **argv){
  if(getuid()||geteuid()||getgid()||getegid()||argc<3||argc>5)return 2;
  pid_t parent=getppid();if(prctl(PR_SET_PDEATHSIG,SIGKILL)||getppid()!=parent)return 2;
  int reserve=!strcmp(argv[1],"--lab-reserve"),status=!strcmp(argv[1],"--lab-status"),deny=!strcmp(argv[1],"--lab-deny");
- int opening=!strcmp(argv[1],"--lab-open"),closing=!strcmp(argv[1],"--lab-close");
+ int opening=!strcmp(argv[1],"--lab-open"),closing=!strcmp(argv[1],"--lab-close")||!strcmp(argv[1],"--lab-close-lisa");
  if(!reserve&&!status&&!deny&&!opening&&!closing)return 2;
  if((opening||closing)?argc<4:(argc>4||(status&&argc!=3)))return 2;
  uint64_t base=opening||closing?lab_number(argv[3]):0;
@@ -212,7 +212,7 @@ int main(int argc,char **argv){
   result=open_execute(state,runtime,0,base,boot,&ops)==OPEN_OK?0:-1;
  }else if(closing){
   struct close_ops ops={lab_deny,lab_stop,lab_verify_closed,NULL,&context};
-  result=close_execute(state,runtime,0,base,LISA_MODE_PAUSED,&ops)==CLOSE_OK?0:-1;
+  result=close_execute(state,runtime,0,base,!strcmp(argv[1],"--lab-close-lisa")?LISA_MODE_LISA:LISA_MODE_PAUSED,&ops)==CLOSE_OK?0:-1;
  }
 done: ;
  int observed=!epoch_mutation_load(&context.mutation);

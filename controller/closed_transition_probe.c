@@ -93,6 +93,33 @@ int main(int argc,char **argv) {
             mode_store_read(state,owner,&mode)==STORE_OK && mode.revision==2 && mode.requested==LISA_MODE_PAUSED,
             "resume_does_not_trust_cached_policy_or_double_commit");
     }
+    for(int phase=CLOSE_REQUESTED;phase<=CLOSE_COMPLETE;++phase){
+        CHECK(!reset_fixture(&f,state,runtime,owner)&&close_execute(state,runtime,owner,1,LISA_MODE_PAUSED,&ops)==CLOSE_OK,
+            "prepare_completed_closed_rollover");
+        f.deny_calls=f.stop_calls=f.verify_calls=f.denied=f.stopped=0;f.crash_phase=phase;
+        pid_t child=fork();CHECK(child>=0,"rollover_checkpoint_fork");
+        if(!child){(void)close_execute(state,runtime,owner,2,LISA_MODE_LISA,&ops);_exit(120);}
+        int status;CHECK(waitpid(child,&status,0)==child&&WIFEXITED(status)&&WEXITSTATUS(status)==90+phase,
+            "rollover_interrupted_at_each_durable_phase");
+        CHECK(!close_read(state,owner,&pending)&&pending.base_revision==2&&pending.target==LISA_MODE_LISA&&
+            mode_store_boot_choice(state,owner)==LISA_MODE_PAUSED&&gate_acquire(state,runtime,owner,BOOT,&lease)==GATE_DENIED,
+            "rollover_always_retains_startup_fence");
+        CHECK(mode_store_read(state,owner,&mode)==STORE_OK&&mode.revision==(phase<CLOSE_COMMITTED?2u:3u),
+            "rollover_crash_revision_consistent");
+        f.crash_phase=-1;
+        CHECK(close_execute(state,runtime,owner,2,LISA_MODE_LISA,&ops)==CLOSE_OK&&!f.bad&&
+            mode_store_read(state,owner,&mode)==STORE_OK&&mode.revision==3&&mode.requested==LISA_MODE_LISA,
+            "rollover_retry_finishes_without_duplicate_commit");
+        CHECK(close_execute(state,runtime,owner,3,LISA_MODE_PAUSED,&ops)==CLOSE_OK&&
+            mode_store_read(state,owner,&mode)==STORE_OK&&mode.revision==4&&mode.requested==LISA_MODE_PAUSED,
+            "closed_modes_change_without_return_to_alice");
+    }
+    CHECK(!reset_fixture(&f,state,runtime,owner),"prepare_incomplete_rollover_refusal");
+    struct close_record incomplete={1,LISA_MODE_PAUSED,CLOSE_REQUESTED};
+    CHECK(!close_publish(state,owner,&incomplete)&&mode_store_request(state,owner,1,LISA_MODE_PAUSED,&mode)==STORE_OK&&
+        close_execute(state,runtime,owner,2,LISA_MODE_LISA,&ops)==CLOSE_CONFLICT&&
+        !close_read(state,owner,&pending)&&pending.phase==CLOSE_REQUESTED&&pending.base_revision==1,
+        "incomplete_fence_cannot_be_superseded");
     for(int failure=0;failure<3;++failure) {
         CHECK(!reset_fixture(&f,state,runtime,owner),"reset_failure_fixture");
         f.deny_fail=failure==0; f.stop_fail=failure==1; f.verify_fail=failure==2;
