@@ -33,6 +33,7 @@ parser.add_argument(
         "ipc-guard-probe",
         "udp-evidence-probe",
         "connmark-probe",
+        "label-policy-probe",
     ),
     default="station-ctl",
 )
@@ -62,6 +63,7 @@ sources = {
     "ipc-guard-probe": "ipc_guard_probe.c",
     "udp-evidence-probe": "udp_evidence_probe.c",
     "connmark-probe": "connmark_probe.c",
+    "label-policy-probe": "label_policy_probe.c",
 }
 output = root / "build" / (args.target + ".armhf")
 output.parent.mkdir(exist_ok=True)

@@ -55,6 +55,17 @@ has not yet been separately fault-injected for this new fixture.
 
 ## Required composition
 
+`label_policy.h` now constructs and verifies the declared four-role policy:
+an exact four-group marking chain in mangle, a separate exact connmark DROP
+chain, first mangle OUTPUT and filter INPUT hooks, and consecutive group-deny /
+label-deny hooks at the beginning of filter OUTPUT, in both families. Names are
+derived from the existing validated owned chain. Unexpected exceptions, missing
+roles, wrong masks or changed ordering cannot satisfy the canonical comparison.
+It invokes only fixed xtables programs with bounded captured output; it never
+installs or flushes a rule. Its pure rule fixtures passed **29 checks on the
+speaker and fortified host**. This verifier is not yet wired into role admission
+or the durable close callbacks and has not yet qualified a live combined policy.
+
 Install and verify marking **before** releasing any guarded sender. Compose
 label rules and their ordering with the four-role barrier, durable close fence
 and restart recovery; verify missing-family and conflicting-rule refusal.
