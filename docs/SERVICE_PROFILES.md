@@ -1,8 +1,8 @@
 # Independent DNS/time profiles and startup admission
 
-These are development components. They do not replace the speaker's current
-services, install boot wrappers, or enable the HA mode selector. The diagnostic
-release still reports vendor isolation as unknown.
+These are development components. The [guarded independent DNS handler](INDEPENDENT_DNS.md)
+now supports a bounded resolver-only handoff, but is not installed. These
+components do not enable the HA mode selector; isolation remains unknown.
 
 ## Explicit service profiles
 
@@ -25,6 +25,11 @@ pool fallback. It is client-only and disables UDP and Unix command sockets.
 The production template retains a dedicated drift file and the stock initial
 clock-correction behavior. A diagnostic template has separate paths/ports and
 omits drift, stepping and RTC directives.
+
+Production and network-handler profiles use separate DNS/time runtime paths.
+The new DNS profile has an empty username because its guarded launcher drops
+credentials before exec; it must not be started directly as root. The older
+parallel query fixture retains its explicit nobody profile and unprivileged port.
 
 The format was checked against the installed Unbound 1.19.0 and chrony 3.5.
 References: [Unbound forwarding](https://unbound.docs.nlnetlabs.nl/en/latest/manpages/unbound.conf.html#forward-zone-options),

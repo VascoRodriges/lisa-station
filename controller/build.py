@@ -40,6 +40,7 @@ parser.add_argument(
         "station-boot",
         "boot-state-probe",
         "auxiliary-probe",
+        "dns-profile-probe",
     ),
     default="station-ctl",
 )
@@ -76,6 +77,7 @@ sources = {
     "station-boot": "station_boot.c",
     "boot-state-probe": "boot_state_probe.c",
     "auxiliary-probe": "auxiliary_probe.c",
+    "dns-profile-probe": "dns_profile_probe.c",
 }
 output = root / "build" / (args.target + ".armhf")
 output.parent.mkdir(exist_ok=True)

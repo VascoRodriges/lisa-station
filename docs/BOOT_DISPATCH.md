@@ -78,8 +78,9 @@ python controller/build.py --target boot-dispatch-probe
 
 ## Deployment still required
 
-Complete the fixed coordinator's independent DNS/time handlers; its closed-policy
-bootstrap and constrained mixer are qualified separately. Bind every vendor admission to
+Complete the fixed coordinator's independent time handler and boot composition;
+its closed-policy bootstrap, constrained mixer and [resolver](INDEPENDENT_DNS.md)
+are qualified separately. Bind every vendor admission to
 the verified current boot and explicit intent. Prepare an immutable private
 firmware/init manifest, reject unsupported entry changes and make direct init
 calls obey the same gates. The installer must verify all payloads/backups before

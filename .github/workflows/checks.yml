@@ -58,6 +58,7 @@ jobs:
       - run: python controller/build.py --target station-boot
       - run: python controller/build.py --target boot-state-probe
       - run: python controller/build.py --target auxiliary-probe
+      - run: python controller/build.py --target dns-profile-probe
       - name: Exercise mode storage on the host
         run: |
           cc -O2 -Wall -Wextra -Werror controller/mode_store_probe.c -o build/mode-store-host
@@ -97,6 +98,8 @@ jobs:
           cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/auxiliary_probe.c -o build/auxiliary-host
           chmod 700 build/auxiliary-host
           ./build/auxiliary-host
+          cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/dns_profile_probe.c -o build/dns-profile-host
+          ./build/dns-profile-host
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: station-controller-armhf
@@ -217,3 +220,7 @@ jobs:
         with:
           name: station-auxiliary-qualification-armhf
           path: build/auxiliary-probe.armhf
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: station-dns-profile-qualification-armhf
+          path: build/dns-profile-probe.armhf

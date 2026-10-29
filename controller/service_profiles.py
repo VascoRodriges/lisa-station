@@ -39,13 +39,24 @@ class ServiceProfiles:
     time: str
 
 
-def compile_profiles(dns_servers, ntp_servers, *, probe_directory=None, dns_port=53):
+def compile_profiles(dns_servers, ntp_servers, *, probe_directory=None, dns_port=53, network_directory=None):
     if type(dns_port) is not int:
         raise ValueError("numeric integer DNS port required")
     dns = numeric_servers(dns_servers)
     ntp = numeric_servers(ntp_servers)
-    if probe_directory is None:
-        runtime = "/run/lisa-station"
+    if probe_directory is not None and network_directory is not None:
+        raise ValueError("choose one explicit laboratory runtime")
+    if network_directory is not None:
+        if not isinstance(network_directory, str) or not re.fullmatch(
+            r"/bkupgrade/data/opt/lisa-controller-lab/boot-policy\.[A-Za-z0-9]{6,16}/network",
+            network_directory,
+        ):
+            raise ValueError("invalid independent network service runtime")
+        if dns_port != 53 and not 1024 <= dns_port <= 65535:
+            raise ValueError("invalid laboratory DNS port")
+        dns_runtime, time_runtime = network_directory + "/dns", network_directory + "/time"
+    elif probe_directory is None:
+        dns_runtime, time_runtime = "/run/lisa-station-net/dns", "/run/lisa-station-net/time"
         if dns_port != 53:
             raise ValueError("production DNS uses port 53")
     else:
@@ -53,7 +64,7 @@ def compile_profiles(dns_servers, ntp_servers, *, probe_directory=None, dns_port
             r"/tmp/lisa-service-probe\.[A-Za-z0-9]{6,16}", probe_directory
         ):
             raise ValueError("invalid private probe directory")
-        runtime = probe_directory
+        dns_runtime = time_runtime = probe_directory
         if type(dns_port) is not int or not 1024 <= dns_port <= 65535:
             raise ValueError("probe requires an unprivileged DNS port")
     resolver = [
@@ -61,10 +72,10 @@ def compile_profiles(dns_servers, ntp_servers, *, probe_directory=None, dns_port
         '    interface: "127.0.0.1"',
         '    interface: "::1"',
         f"    port: {dns_port}",
-        '    username: "nobody"',
+        '    username: "nobody"' if probe_directory is not None else '    username: ""',
         '    chroot: ""',
-        '    directory: "/tmp"',
-        f'    pidfile: "{runtime}/unbound.pid"',
+        f'    directory: "{dns_runtime}"',
+        f'    pidfile: "{dns_runtime}/unbound.pid"',
         "    do-ip4: yes",
         "    do-ip6: yes",
         "    do-udp: yes",
@@ -87,7 +98,7 @@ def compile_profiles(dns_servers, ntp_servers, *, probe_directory=None, dns_port
     ]
     resolver += [f'    forward-addr: "{address}"' for address in dns]
     clock = [f"server {address} iburst" for address in ntp]
-    clock += [f"pidfile {runtime}/chronyd.pid", "port 0", "cmdport 0", "bindcmdaddress /"]
-    if probe_directory is None:
+    clock += [f"pidfile {time_runtime}/chronyd.pid", "port 0", "cmdport 0", "bindcmdaddress /"]
+    if probe_directory is None and network_directory is None:
         clock += ["driftfile /data/opt/lisa-station/time/drift", "makestep 1.0 3", "rtcsync"]
     return ServiceProfiles("\n".join(resolver) + "\n", "\n".join(clock) + "\n")

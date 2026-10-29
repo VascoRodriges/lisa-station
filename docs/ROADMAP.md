@@ -106,3 +106,7 @@ The [independent mixer adapter](HARDWARE_VOLUME.md) now runs the real calibrated
 volume daemon with no networking, PCM nodes or host state. Its bounded handoff
 verifies hardware mapping and restores stock volume; permanent boot deployment,
 independent DNS/time and the remaining mode handlers are still pending.
+The [independent DNS handler](INDEPENDENT_DNS.md) now has a pre-dropped identity,
+private filesystem, native profile validation and actual four-listener evidence.
+Its port-53 handoff passes and restores stock DNS; persistent time/boot/mode
+composition and full isolation remain pending.

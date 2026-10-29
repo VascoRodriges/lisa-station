@@ -95,7 +95,7 @@ int main(int argc, char **argv) {
     if (query) {
         char *end;
         unsigned long value = strtoul(argv[2], &end, 10);
-        if (!*argv[2] || *end || value < 1024 || value > 65535) return 3;
+        if (!*argv[2] || *end || (value != 53 && value < 1024) || value > 65535) return 3;
         port = (unsigned)value;
     } else if ((!dns && strcmp(argv[1], "--time")) ||
         !private_profile(argv[2], dns ? "unbound.conf" : "chrony.conf")) return 3;
