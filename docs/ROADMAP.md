@@ -158,3 +158,9 @@ scope independently of damaged primary files and continues a known partial
 barrier. A nine-death transaction preserves the fault and denies old/new service
 flows. Permanent supervision, all intent-journal fault paths and production boot
 integration remain required.
+
+The [transaction safety paths](BARRIER_ORDERING.md) now require a successful
+barrier before permit revocation or actor teardown, including a failed re-denial
+after partial release. Native opening/closing/four-role fixtures pass; a pending
+fence without a verified barrier remains an incomplete transition. Permanent
+supervisor fault routing and production installation remain required.

@@ -94,9 +94,14 @@ static inline int close_revoke(int runtime) {
 /* On any internal failure keep the fence, retry denial, revoke and stop as far
  * as possible. Never reopen a policy or publish an Alice permit as rollback. */
 static inline void close_safety_attempt(int runtime,const struct close_ops *ops) {
-    (void)ops->deny(ops->context);
-    (void)close_revoke(runtime);
-    (void)ops->stop(ops->context);
+    /* Revocation itself may make guardians terminate their actors. Neither
+     * revocation nor teardown is safe until a barrier has been established.
+     * The caller must try its independently reserved denial path if the
+     * primary adapter fails; a pending fence is not proof of closed traffic. */
+    if(ops->deny(ops->context)==0){
+        (void)close_revoke(runtime);
+        (void)ops->stop(ops->context);
+    }
 }
 
 static inline int close_checkpoint(int state,uid_t owner,struct close_record *record,

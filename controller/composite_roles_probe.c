@@ -18,7 +18,7 @@ static int stop(void *pointer,unsigned role) {
     struct fixture *f=pointer;
     if(role>=4) return -1;
     struct stat info;
-    if((unsigned)f->next!=role||!f->deny_calls||!fstatat(f->runtime,"vendor.permit",&info,AT_SYMLINK_NOFOLLOW)||errno!=ENOENT) f->bad=1;
+    if((unsigned)f->next!=role||f->policy_mask!=15||!f->deny_calls||!fstatat(f->runtime,"vendor.permit",&info,AT_SYMLINK_NOFOLLOW)||errno!=ENOENT) f->bad=1;
     f->next=(f->next+1)%4; f->stopped|=1u<<role;
     if(f->stop_fail&(1u<<role)) return -1;
     f->live_mask&=~(1u<<role); return 0;
@@ -66,7 +66,7 @@ int main(int argc,char **argv) {
         if(!check(!reset(&f,state,runtime))) goto cleanup;
         f.policy_mask&=~(1u<<missing);
         check(close_execute(state,runtime,geteuid(),1,LISA_MODE_PAUSED,&ops)==CLOSE_POLICY);
-        check(!f.bad&&f.stopped==15&&f.live_mask==0&&!gate_permit_valid(runtime,geteuid(),1,BOOT));
+        check(!f.bad&&f.stopped==0&&f.live_mask==15&&gate_permit_valid(runtime,geteuid(),1,BOOT));
         check(!close_read(state,geteuid(),&record)&&record.phase!=CLOSE_COMPLETE&&
             gate_acquire(state,runtime,geteuid(),BOOT,&lease)==GATE_DENIED);
         f.policy_mask=15;

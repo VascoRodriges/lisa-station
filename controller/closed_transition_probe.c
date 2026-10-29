@@ -10,20 +10,20 @@
 static const char BOOT[]="11111111-2222-4333-8444-555555555555";
 struct fixture {
     int state,runtime,deny_calls,stop_calls,verify_calls,denied,stopped,bad;
-    int deny_fail,stop_fail,verify_fail,crash_phase;
+    int deny_fail,deny_once,stop_fail,verify_fail,crash_phase;
     uid_t owner;
 };
 static int deny_callback(void *pointer) {
     struct fixture *f=pointer;
     ++f->deny_calls;
     if(!mode_store_close_pending(f->state,f->owner)) f->bad=1;
-    if(f->deny_fail) return -1;
+    if(f->deny_fail||(f->deny_once&&f->deny_calls==1)) return -1;
     f->denied=1; return 0;
 }
 static int stop_callback(void *pointer) {
     struct fixture *f=pointer; ++f->stop_calls;
     struct stat info;
-    if(!f->deny_calls || !fstatat(f->runtime,"vendor.permit",&info,AT_SYMLINK_NOFOLLOW) || errno!=ENOENT) f->bad=1;
+    if(!f->denied || !fstatat(f->runtime,"vendor.permit",&info,AT_SYMLINK_NOFOLLOW) || errno!=ENOENT) f->bad=1;
     if(f->stop_fail) return -1;
     f->stopped=1; return 0;
 }
@@ -127,13 +127,19 @@ int main(int argc,char **argv) {
         CHECK(close_execute(state,runtime,owner,1,LISA_MODE_LISA,&ops)==expected && !f.bad &&
             mode_store_close_pending(state,owner) && mode_store_boot_choice(state,owner)==LISA_MODE_PAUSED,
             "phase_failure_keeps_closed_fence");
-        CHECK(!gate_permit_valid(runtime,owner,1,BOOT) &&
-            gate_acquire(state,runtime,owner,BOOT,&lease)==GATE_DENIED,"phase_failure_revokes_alice");
+        CHECK(gate_permit_valid(runtime,owner,1,BOOT)==(failure==0) &&
+            (failure!=0||(!f.stop_calls&&!f.stopped))&&
+            gate_acquire(state,runtime,owner,BOOT,&lease)==GATE_DENIED,"failed_denial_retains_running_permit_but_fences_new_starts");
         f.deny_fail=f.stop_fail=f.verify_fail=0;
         CHECK(close_execute(state,runtime,owner,1,LISA_MODE_LISA,&ops)==CLOSE_OK &&
             mode_store_read(state,owner,&mode)==STORE_OK && mode.revision==2 && mode.requested==LISA_MODE_LISA,
             "retry_same_request_commits_only_once");
     }
+    CHECK(!reset_fixture(&f,state,runtime,owner),"reset_transient_denial_failure");f.deny_once=1;
+    CHECK(close_execute(state,runtime,owner,1,LISA_MODE_PAUSED,&ops)==CLOSE_POLICY&&f.deny_calls==2&&
+        f.stop_calls==1&&!f.bad&&!gate_permit_valid(runtime,owner,1,BOOT),"successful_safety_denial_precedes_revoke_and_stop");
+    CHECK(close_execute(state,runtime,owner,1,LISA_MODE_PAUSED,&ops)==CLOSE_OK&&
+        mode_store_read(state,owner,&mode)==STORE_OK&&mode.revision==2,"transient_failure_retry_commits_only_once");
     CHECK(!reset_fixture(&f,state,runtime,owner) &&
         close_execute(state,runtime,owner,2,LISA_MODE_PAUSED,&ops)==CLOSE_CONFLICT &&
         !mode_store_close_pending(state,owner) && !f.deny_calls,"stale_new_request_does_not_modify_state");

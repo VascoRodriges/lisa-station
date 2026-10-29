@@ -31,12 +31,12 @@ static int fixture_write(int directory,const char *name,const char *text){
 static int deny_callback(void *pointer){
     struct fixture *f=pointer;++f->deny_calls;
     if(!mode_store_open_pending(f->state,f->owner)&&!mode_store_close_pending(f->state,f->owner))f->bad=1;
-    if(f->failure==1)return -1;
+    if(f->failure==1||(f->failure==6&&f->deny_calls==1))return -1;
     f->denied=1;f->released=0;return 0;
 }
 static int stop_callback(void *pointer){
     struct fixture *f=pointer;++f->stop_calls;struct stat info;
-    if(!f->deny_calls||!fstatat(f->runtime,"vendor.permit",&info,AT_SYMLINK_NOFOLLOW)||errno!=ENOENT)f->bad=1;
+    if(!f->denied||!fstatat(f->runtime,"vendor.permit",&info,AT_SYMLINK_NOFOLLOW)||errno!=ENOENT)f->bad=1;
     if(f->failure==2)return -1;
     f->stopped=1;return 0;
 }
@@ -59,7 +59,9 @@ static int release_callback(void *pointer){
         !gate_permit_valid(f->runtime,f->owner,mode.revision,f->boot)||open_read(f->state,f->owner,&pending)||
         pending.phase!=OPEN_PERMITTED)f->bad=1;
     if(f->failure==4)return -1;
-    f->released=1;return 0;
+    f->released=1;
+    if(f->failure==7){f->failure=1;f->denied=0;return -1;}
+    return 0;
 }
 static int verify_callback(void *pointer){
     struct fixture *f=pointer;++f->verify_calls;
@@ -118,12 +120,24 @@ int main(int argc,char **argv){
     for(int failure=1;failure<=5;++failure){
         CHECK(!reset_fixture(&f,state,runtime,owner),"reset_callback_failure");f.failure=failure;
         enum open_result expected=failure<=3?OPEN_PREPARE:failure==4?OPEN_RELEASE:OPEN_VERIFY;
-        CHECK(open_execute(state,runtime,owner,2,BOOT,&ops)==expected&&!f.bad&&f.deny_calls>=2&&f.stop_calls>=1&&
+        CHECK(open_execute(state,runtime,owner,2,BOOT,&ops)==expected&&!f.bad&&f.deny_calls>=2&&(failure==1?f.stop_calls==0:f.stop_calls>=1)&&
             !gate_permit_valid(runtime,owner,3,BOOT)&&mode_store_boot_choice(state,owner)==LISA_MODE_PAUSED&&
             gate_acquire(state,runtime,owner,BOOT,&lease)==GATE_DENIED,"failed_open_denies_before_revoke_and_stop");
         f.failure=0;
         CHECK(open_execute(state,runtime,owner,2,BOOT,&ops)==OPEN_OK&&!f.bad,"explicit_retry_after_failure");
     }
+    CHECK(!reset_fixture(&f,state,runtime,owner),"reset_partial_release_then_denial_failure");f.failure=7;
+    CHECK(open_execute(state,runtime,owner,2,BOOT,&ops)==OPEN_RELEASE&&!f.bad&&f.stop_calls==1&&
+        gate_permit_valid(runtime,owner,3,BOOT)&&mode_store_open_pending(state,owner)&&mode_store_boot_choice(state,owner)==LISA_MODE_PAUSED,
+        "partial_release_does_not_revoke_or_teardown_before_recovered_barrier");
+    CHECK(gate_acquire(state,runtime,owner,BOOT,&lease)==GATE_DENIED&&
+        gate_acquire_running(state,runtime,owner,BOOT,&lease)==GATE_GRANTED,"pending_fault_fences_starts_without_premature_guardian_reset");
+    gate_release(&lease);f.failure=0;
+    CHECK(open_execute(state,runtime,owner,2,BOOT,&ops)==OPEN_OK&&!f.bad,"explicit_retry_reestablishes_barrier_after_partial_release");
+    CHECK(!reset_fixture(&f,state,runtime,owner),"reset_transient_open_denial_failure");f.failure=6;
+    CHECK(open_execute(state,runtime,owner,2,BOOT,&ops)==OPEN_PREPARE&&f.deny_calls==2&&f.stop_calls==1&&!f.bad,
+        "open_safety_retries_barrier_before_teardown");
+    f.failure=0;CHECK(open_execute(state,runtime,owner,2,BOOT,&ops)==OPEN_OK&&!f.bad,"explicit_retry_after_transient_denial");
     CHECK(!reset_fixture(&f,state,runtime,owner)&&open_execute(state,runtime,owner,1,BOOT,&ops)==OPEN_CONFLICT&&
         !f.deny_calls&&!mode_store_open_pending(state,owner),"stale_request_cannot_modify_closed_state");
     held=openat(state,"transition.lock",O_RDWR|O_CREAT|O_CLOEXEC,0600);

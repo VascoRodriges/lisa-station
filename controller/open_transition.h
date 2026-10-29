@@ -97,7 +97,9 @@ static inline int open_permit_publish(int runtime,uid_t owner,uint64_t revision,
 static inline void open_safety_attempt(int runtime,const struct open_ops *ops) {
     /* Deny before revocation/teardown, including after a partial policy release.
      * Pending admission remains fenced even if denial cannot be reverified. */
-    (void)ops->deny(ops->context);(void)close_revoke(runtime);(void)ops->stop(ops->context);
+    if(ops->deny(ops->context)==0){
+        (void)close_revoke(runtime);(void)ops->stop(ops->context);
+    }
 }
 static inline int open_closed_record_matches(const struct close_record *closed,const struct mode_record *mode) {
     return close_completed_matches(closed,mode);
