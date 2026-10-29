@@ -6,8 +6,13 @@
 #include <net/if.h>
 #include "tcp_owner.h"
 #include "loopback_socket.h"
+#include "relay_resources.h"
 
 static const char *role(pid_t pid) {
+    const char *executables[]={"/system/vendor/quasar/maind","/system/vendor/quasar/quasar_launcher2",
+        "/usr/bin/alsa-audio-monitord","/usr/sbin/unbound","/usr/sbin/chronyd"};
+    const char *names[]={"vendor-worker","vendor-launcher","audio-diagnostics","dns","time"};
+    for(unsigned i=0;i<5;++i) if(relay_executable_is(pid,executables[i])==1) return names[i];
     char path[64],executable[PATH_MAX]; snprintf(path,sizeof(path),"/proc/%ld/exe",(long)pid);
     ssize_t size=readlink(path,executable,sizeof(executable)-1);
     if(size<0 || size>=(ssize_t)sizeof(executable)-1) return "unknown";

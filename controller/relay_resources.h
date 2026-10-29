@@ -85,7 +85,18 @@ static inline int relay_identity(pid_t pid,struct relay_identity *identity) {
 static inline int relay_same(const struct relay_identity *a,const struct relay_identity *b) {
     return a->ticks==b->ticks&&a->device==b->device&&a->inode==b->inode;
 }
+/* A bind-mounted executable can render under the jail's host-side pathname in
+ * /proc/PID/exe. Compare the pinned firmware object, not its rendered alias. */
+static inline int relay_executable_is(pid_t pid,const char *expected) {
+    char path[64]; struct stat actual,source;
+    if(pid<1||!expected||expected[0]!='/') return -1;
+    snprintf(path,sizeof(path),"/proc/%ld/exe",(long)pid);
+    if(stat(path,&actual)||stat(expected,&source)) return -1;
+    return S_ISREG(actual.st_mode)&&S_ISREG(source.st_mode)&&actual.st_dev==source.st_dev&&actual.st_ino==source.st_ino;
+}
 static inline unsigned relay_role(pid_t pid) {
+    const char *fixed[]={"/system/vendor/quasar/maind","/system/vendor/quasar/quasar_launcher2",NULL,"/usr/bin/alsa-audio-monitord"};
+    for(unsigned i=0;i<4;++i) if(fixed[i]&&relay_executable_is(pid,fixed[i])==1) return i;
     char path[64],name[PATH_MAX]; snprintf(path,sizeof(path),"/proc/%ld/exe",(long)pid);
     ssize_t size=readlink(path,name,sizeof(name)-1);
     if(size<=0||size>=(ssize_t)sizeof(name)-1) return 4;

@@ -101,6 +101,8 @@ int main(int argc,char **argv) {
     if(guardian_readable(channel[0],8000)&&read(channel[0],result,sizeof(result))==sizeof(result)) {
         failure_mask|=result[2]<<checks; checks+=(unsigned)result[0]; failed+=(unsigned)result[1]; check(!collector_private_view(child));
         check(collector_runtime_private(child));
+        check(relay_executable_is(child,executable)==1);
+        check(relay_executable_is(child,"/dev/null")==0);
     } else check(0);
     if(write(commands[1],"X",1)!=1) check(0);
     close(commands[1]); close(channel[0]); int status;

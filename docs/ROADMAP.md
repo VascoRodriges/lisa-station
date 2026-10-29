@@ -7,7 +7,7 @@ This roadmap distinguishes shipped code from acceptance targets.
 | Phase | Deliverable | Acceptance | Status |
 |---|---|---|---|
 | 1 | Status controller, pinned transport, UI setup and diagnostic entities | Real device status; incompatible data rejected; offline state safe; no false privacy claim | v0.1.0 |
-| 2 | Speaker-local vendor isolation | Cover senders outside the main launcher, descendants, old sockets, local relays, DNS, IPv4/IPv6 and telemetry queues; other applications retain internet | Collector and telemetry filesystem boundaries implemented; telemetry LMDB/lifecycle observed but real SDK batch unmaterialized, so full telemetry qualification remains open; IPC/UDP/boot composition pending |
+| 2 | Speaker-local vendor isolation | Cover senders outside the main launcher, descendants, old sockets, local relays, DNS, IPv4/IPv6 and telemetry queues; other applications retain internet | Actual four-role startup/close trial passed; collector and telemetry filesystem boundaries implemented; platform shared state, receiver/IPC, UDP, old flows and boot composition pending; real SDK batch remains unmaterialized |
 | 3 | Persistent mode controller | Alice / Lisa / Paused, serialized transitions, verified actual state, boot enforcement before vendor startup, fail closed, explicit return to Alice | Durable close engine: 65 transaction, 34 admission and 54 guardian checks passed; scoped quasar policy/stop trial implemented; production callbacks, boot gates and Alice return pending |
 | 4 | Permanent speech service | No workstation dependency; local KWS, standalone VQE, target-speaker extraction on a server, Assist through response playback, physical mute honored | Bounded research prototype exists outside this release |
 | 5 | Assist satellite and voice settings | Pipeline choice, listening/processing/responding states, LED feedback, measured latency and recovery | Planned |
@@ -82,3 +82,7 @@ composition remain pending.
 The [kernel IPC queue guard](IPC_QUEUES.md) denies System V and POSIX message
 queue interfaces in new guarded actors. Existing unguarded services and UNIX/
 file/mapping relay paths still require migration and composition.
+The [four-role startup trial](SPLIT_STARTUP.md) now runs the actual platform/media,
+collector, telemetry and diagnostics under separate guards and closes them
+together. It verifies executable object identity across jail aliases; platform
+filesystem isolation and permanent deployment remain pending.

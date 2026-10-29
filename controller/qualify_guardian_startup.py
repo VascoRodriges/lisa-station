@@ -201,19 +201,9 @@ def evaluate_events(events, closed_policy=False):
     )
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("host")
-    parser.add_argument("--ssh-config", type=Path)
-    parser.add_argument("--allow-temporary-stock-restart", action="store_true", required=True)
-    parser.add_argument(
-        "--exercise-closed-policy",
-        action="store_true",
-        help="Temporarily filter only the trial vendor group and exercise the closed transaction",
-    )
-    args = parser.parse_args()
+def run_trial(args, script_factory=trial_script, event_evaluator=evaluate_events, *, profile_factories=None):
     if args.host.startswith("-"):
-        parser.error("host must be an SSH alias")
+        raise ValueError("host must be an SSH alias")
     root = Path(__file__).resolve().parents[1]
     binary = (root / "build/station-service.armhf").read_bytes()
     digest = hashlib.sha256(binary).hexdigest()
@@ -235,26 +225,60 @@ def main():
     def remote(command, **kwargs):
         return subprocess.run(ssh + [command], capture_output=True, timeout=700, **kwargs)
 
+    def publish(path, payload, mode):
+        digest_payload = hashlib.sha256(payload).hexdigest()
+        permission = {"700": "-rwx------", "600": "-rw-------"}[mode]
+        cached = remote(
+            "test -f "
+            + path
+            + " && test ! -L "
+            + path
+            + " && ls -ln "
+            + path
+            + " | awk '$1==\""
+            + permission
+            + "\" && $2==1 && $3==0 {ok=1} END{exit !ok}' && sha256sum "
+            + path
+        )
+        words = cached.stdout.decode(errors="replace").split()
+        if cached.returncode == 0 and words and words[0] == digest_payload:
+            return
+        remote(
+            "umask 077; cat > " + path + ".new && chmod " + mode + " " + path + ".new",
+            input=payload,
+            check=True,
+        )
+        if remote("sha256sum " + path + ".new", check=True).stdout.decode().split()[0] != digest_payload:
+            raise RuntimeError("uploaded artifact digest mismatch")
+        remote("mv " + path + ".new " + path, check=True)
+
     identity = "pidof quasar_launcher2; cat /proc/sys/kernel/random/boot_id; sha256sum /system/vendor/quasar/launch.json"
     remote("test ! -d /bkupgrade/data/opt/lisa-station/state && test ! -d /run/lisa-station", check=True)
     before = remote(identity, check=True).stdout
     firewall = remote("iptables-save; ip6tables-save", check=True).stdout
     (root / "build/guardian-firewall-before.txt").write_bytes(firewall)
-    (root / "build/guardian-startup-launch-backup.json").write_bytes(
-        remote("cat /system/vendor/quasar/launch.json", check=True).stdout
-    )
+    launch = remote("cat /system/vendor/quasar/launch.json", check=True).stdout
+    (root / "build/guardian-startup-launch-backup.json").write_bytes(launch)
     target = "/data/opt/lisa-controller-lab/station-service-" + digest[:16]
-    remote("umask 077; cat > " + target + ".new && chmod 700 " + target + ".new", input=binary, check=True)
-    if remote("sha256sum " + target + ".new", check=True).stdout.decode().split()[0] != digest:
-        raise RuntimeError("uploaded binary digest mismatch")
-    remote("mv " + target + ".new " + target, check=True)
+    publish(target, binary, "700")
     # Uninstalled production paths must deny even before a lab permit exists.
     default = remote(target + " --start-quasar")
     default_event = json.loads(default.stdout)
     default_denied = default.returncode != 0 and default_event.get("result") == "denied"
     if not default_denied:
         raise SystemExit("uninstalled production path did not deny")
-    result = remote("sh -s", input=trial_script(target, args.exercise_closed_policy).encode())
+    script = script_factory(target, args.exercise_closed_policy)
+    if profile_factories:
+        if set(profile_factories) != {"COLLECTOR", "TELEMETRY", "LAUNCH"} or not args.exercise_closed_policy:
+            raise ValueError("unsupported split startup profiles")
+        stock = json.loads(remote("cat /system/vendor/quasar/quasar.cfg", check=True).stdout)
+        for name, factory in profile_factories.items():
+            payload = json.dumps(factory(json.loads(launch) if name == "LAUNCH" else stock)).encode()
+            digest_profile = hashlib.sha256(payload).hexdigest()
+            path = "/data/opt/lisa-controller-lab/split-profile-" + name.lower() + "-" + digest_profile[:16]
+            publish(path, payload, "600")
+            script = script.replace("@" + name + "@", path)
+    result = remote("sh -s", input=script.encode())
     after = remote(identity, check=True).stdout
     recovery = (
         remote(
@@ -271,7 +295,7 @@ def main():
         binary_sha256=digest,
         returncode=result.returncode,
         events=events,
-        qualified=result.returncode == 0 and evaluate_events(events, args.exercise_closed_policy),
+        qualified=result.returncode == 0 and event_evaluator(events, args.exercise_closed_policy),
         closed_policy_exercised=args.exercise_closed_policy,
         firewall_rules_restored=rules_only(firewall) == rules_only(firewall_after),
         default_production_start_denied=default_denied,
@@ -283,9 +307,13 @@ def main():
         error=result.stderr.decode(errors="replace")[-2000:],
     )
     filename = (
-        "guardian-closed-policy-qualification.json"
-        if args.exercise_closed_policy
-        else "guardian-startup-qualification.json"
+        "split-roles-qualification.json"
+        if profile_factories
+        else (
+            "guardian-closed-policy-qualification.json"
+            if args.exercise_closed_policy
+            else "guardian-startup-qualification.json"
+        )
     )
     (root / "build" / filename).write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps({key: value for key, value in report.items() if key != "events"}, indent=2))
@@ -296,6 +324,19 @@ def main():
         and report["firewall_rules_restored"]
     ):
         raise SystemExit("guardian trial did not qualify; inspect private report")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("host")
+    parser.add_argument("--ssh-config", type=Path)
+    parser.add_argument("--allow-temporary-stock-restart", action="store_true", required=True)
+    parser.add_argument(
+        "--exercise-closed-policy",
+        action="store_true",
+        help="Temporarily filter only the trial vendor group and exercise the closed transaction",
+    )
+    run_trial(parser.parse_args())
 
 
 if __name__ == "__main__":
