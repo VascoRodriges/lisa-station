@@ -189,3 +189,9 @@ metadata file. Platform stops at the denied D-Bus dependency; media cannot creat
 its time provider. Both are drained, with no real identity/audio or production
 changes. Narrow IPC/time adapters, actual SDK queues and permanent installation
 remain required; these diagnostic failures are not functional acceptance.
+
+The [preconnected byte-channel foundation](UNIX_CHANNEL.md) now verifies kernel
+retarget/descriptor-passing denial and fresh channels despite retained old queue
+references. It uses only own mock endpoints and has not opened the real bus or
+changed the SDK’s network policy. Protocol adapters and receiver revocation remain
+required before production composition.

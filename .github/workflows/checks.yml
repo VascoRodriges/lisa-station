@@ -58,6 +58,7 @@ jobs:
       - run: python controller/build.py --target platform-storage-probe
       - run: python controller/build.py --target platform-worker-probe
       - run: python controller/build.py --target platform-sdk-probe
+      - run: python controller/build.py --target unix-channel-probe
       - run: python controller/build.py --target station-init
       - run: python controller/build.py --target boot-runner-probe
       - run: python controller/build.py --target boot-dispatch-probe
@@ -105,6 +106,8 @@ jobs:
           ./build/platform-storage-host --selftest
           cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror -pthread controller/platform_worker_probe.c -o build/platform-worker-host
           ./build/platform-worker-host --selftest
+          cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/unix_channel_probe.c -o build/unix-channel-host
+          ./build/unix-channel-host --selftest
           cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/boot_runner_probe.c -o build/boot-runner-host
           chmod 700 build/boot-runner-host
           ./build/boot-runner-host
@@ -277,3 +280,7 @@ jobs:
         with:
           name: station-platform-sdk-diagnostic-armhf
           path: build/platform-sdk-probe.armhf
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: station-unix-channel-qualification-armhf
+          path: build/unix-channel-probe.armhf

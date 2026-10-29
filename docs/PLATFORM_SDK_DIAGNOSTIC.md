@@ -85,6 +85,13 @@ python -m controller.qualify_platform_sdk YOUR_SPEAKER_SSH_ALIAS \
 
 ## Remaining work
 
+The SDK’s static imports/configuration also identify a GStreamer network time
+provider. Its [documented constructor](https://gstreamer.freedesktop.org/documentation/net/gstnettimeprovider.html)
+exports a clock on a network address/port and can fail. The observed media error
+is consistent with deliberate socket denial; it does not establish a missing
+hardware clock or justify access to live RMS/audio. The dynamic dependency still
+needs verification before designing a clock adapter.
+
 The next step is reviewed D-Bus/time-provider compatibility through explicit
 capabilities or narrow adapters, with bounded queues and receiver lifecycle checks.
 The host bus, broad UNIX socket creation and host DATA must not be reopened merely

@@ -6,6 +6,7 @@ import json
 import subprocess
 from pathlib import Path
 
+from controller.lab_artifact import canonical_lab_artifact
 from controller.qualify_socket_close import rules_only
 
 SCRIPT = r"""
@@ -147,6 +148,7 @@ def main():
     if remote("sha256sum " + target + ".new", check=True).stdout.decode().split()[0] != digest:
         raise RuntimeError("platform storage digest mismatch")
     remote("mv " + target + ".new " + target, check=True)
+    target = canonical_lab_artifact(remote, target)
     identity = "pidof quasar_launcher2 maind alsa-audio-monitord hardvold chronyd unbound; cat /proc/sys/kernel/random/boot_id; sha256sum /etc/init.d/rcS /etc/init.d/S99zdropbear /etc/chrony.conf /etc/unbound/unbound.conf /etc/resolv.conf"
     before = remote(identity, check=True).stdout
     firewall = remote("iptables-save; ip6tables-save", check=True).stdout
