@@ -43,6 +43,7 @@ Qualified ARM SHA256:
 - open: `03c8de42ece12bfe12614522f7c92d0b5e21e59441d91c34d17d5b810888d9b8`
 - four-role: `9bdcc6664ec45857ba56ecf755ded5a50627a8603ea32eb176a4bbcd2e4514ca`
 
-The permanent supervisor still needs to route every journal fault through its
-cached emergency barrier and report incomplete scope closure honestly. Production
-service/boot installation and full privacy acceptance remain unfinished.
+The later [common supervisor](SUPERVISOR_RECOVERY.md) routes damaged intent
+journals through the cached barrier and distinguishes scoped closure from an
+incomplete attempt. Permanent production supervision, service/boot installation
+and full privacy acceptance remain unfinished.

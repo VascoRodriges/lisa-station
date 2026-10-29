@@ -3,7 +3,18 @@
 #include <stdlib.h>
 #include "epoch_mutation.h"
 #include "pending_recovery.h"
+#include "supervisor_recovery.h"
 #include "emergency_policy.h"
+static uint64_t lab_number(const char *text){
+ if(!text||*text<'0'||*text>'9')return 0;
+ errno=0;char *end;unsigned long long value=strtoull(text,&end,10);return errno||*end?0:value;
+}
+static int lab_small_number(const char *text,unsigned minimum,unsigned maximum,unsigned *output){
+ if(!output||!text)return -1;
+ uint64_t value=lab_number(text);
+ if(value<minimum||value>maximum||(!value&&strcmp(text,"0")))return -1;
+ *output=(unsigned)value;return 0;
+}
 #define CHECK(x) do{++checks;if(!(x)){fprintf(stderr,"epoch-store draft check line %d\n",__LINE__);return 2;}}while(0)
 static int selftest(const char *base){
  unsigned checks=0;umask(077);char path[256];snprintf(path,sizeof(path),"%s/lisa-epoch-store.XXXXXX",base);CHECK(mkdtemp(path));
@@ -155,6 +166,55 @@ static int emergency_selftest(const char *base){
 }
 #undef CHECK
 
+#define CHECK(x) do{++checks;if(!(x)){fprintf(stderr,"supervisor fixture line %d\n",__LINE__);return 2;}}while(0)
+struct supervisor_fixture{int scope,inspected,emergencies,stopped,absent,stop_fail,absent_fail;struct supervisor_closure closed;};
+static enum supervisor_scope supervisor_fixture_inspect(void *p,const struct recovery_plan *plan){(void)plan;struct supervisor_fixture *f=p;++f->inspected;return f->scope;}
+static struct supervisor_closure supervisor_fixture_emergency(void *p){struct supervisor_fixture *f=p;++f->emergencies;return f->closed;}
+static int supervisor_fixture_stop(void *p){struct supervisor_fixture *f=p;++f->stopped;return f->stop_fail;}
+static int supervisor_fixture_absent(void *p){struct supervisor_fixture *f=p;++f->absent;return f->absent_fail;}
+static int supervisor_fixture_yes(void *p){(void)p;return 0;}
+static int supervisor_fixture_put(int dir,const char *name,const char *text){int fd=openat(dir,name,O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC,0600);if(fd<0)return -1;int failed=store_write_all(fd,text,strlen(text));if(close(fd))failed=1;return failed;}
+static int supervisor_selftest(const char *base){
+ umask(077);unsigned checks=0;char path[256];snprintf(path,sizeof(path),"%s/lisa-supervisor.XXXXXX",base);CHECK(mkdtemp(path));
+ int state=open(path,O_RDONLY|O_DIRECTORY|O_CLOEXEC);CHECK(state>=0);uid_t owner=geteuid();
+ struct supervisor_fixture f={0};struct close_ops close_callbacks={supervisor_fixture_yes,supervisor_fixture_yes,supervisor_fixture_yes,NULL,&f};
+ struct supervisor_ops ops={supervisor_fixture_inspect,supervisor_fixture_emergency,supervisor_fixture_stop,supervisor_fixture_absent,&close_callbacks,&f};struct recovery_plan plan;
+ CHECK(!supervisor_fixture_put(state,"mode.state","LISA_MODE_V1 1 alice\n"));
+ CHECK(supervisor_attempt(state,state,owner,&ops,&plan)==SUPERVISOR_IDLE&&f.inspected==1&&!f.emergencies);
+ struct recovery_lease held={.descriptor=-1};CHECK(recovery_lock(state,owner,&held)==RECOVERY_CLEAR);
+ CHECK(supervisor_attempt(state,state,owner,&ops,&plan)==SUPERVISOR_RETRY&&f.inspected==1&&!f.emergencies);recovery_unlock(&held);
+ f.scope=SUPERVISOR_SCOPE_BUSY;CHECK(supervisor_attempt(state,state,owner,&ops,&plan)==SUPERVISOR_RETRY&&!f.emergencies);
+ f.scope=SUPERVISOR_SCOPE_BROKEN;CHECK(supervisor_attempt(state,state,owner,&ops,&plan)==SUPERVISOR_FAULT_INCOMPLETE&&f.emergencies==1&&!f.stopped);
+ f.closed=(struct supervisor_closure){-1,1,1};CHECK(supervisor_attempt(state,state,owner,&ops,&plan)==SUPERVISOR_FAULT_INCOMPLETE&&!f.stopped);
+ f.closed=(struct supervisor_closure){1,0,1};CHECK(supervisor_attempt(state,state,owner,&ops,&plan)==SUPERVISOR_FAULT_INCOMPLETE&&f.stopped==1&&f.absent==1);
+ f.closed=(struct supervisor_closure){1,1,0};CHECK(supervisor_attempt(state,state,owner,&ops,&plan)==SUPERVISOR_FAULT_INCOMPLETE);
+ f.closed=(struct supervisor_closure){1,1,1};CHECK(supervisor_attempt(state,state,owner,&ops,&plan)==SUPERVISOR_FAULT_CLOSED);
+ f.stop_fail=1;CHECK(supervisor_attempt(state,state,owner,&ops,&plan)==SUPERVISOR_FAULT_INCOMPLETE);f.stop_fail=0;f.absent_fail=1;
+ CHECK(supervisor_attempt(state,state,owner,&ops,&plan)==SUPERVISOR_FAULT_INCOMPLETE);f.absent_fail=0;f.scope=SUPERVISOR_SCOPE_SOUND;
+ const char *names[]={"mode.state","closed.request","opening.request"};const char *restore[]={"LISA_MODE_V1 1 alice\n",NULL,NULL};
+ for(unsigned i=0;i<3;++i){int before=f.inspected;CHECK(!supervisor_fixture_put(state,names[i],"corrupt\n"));
+  CHECK(supervisor_attempt(state,state,owner,&ops,&plan)==SUPERVISOR_FAULT_CLOSED&&f.inspected==before);
+  if(restore[i])CHECK(!supervisor_fixture_put(state,names[i],restore[i]));else CHECK(!unlinkat(state,names[i],0));}
+ CHECK(!fchmodat(state,"transition.lock",0644,0));int inspected_before=f.inspected;
+ CHECK(supervisor_attempt(state,state,owner,&ops,&plan)==SUPERVISOR_FAULT_CLOSED&&f.inspected==inspected_before);
+ CHECK(!fchmodat(state,"transition.lock",0600,0));
+ unsigned parsed=77;const char *oversized[]={"4294967297","18446744073709551615","-1","garbage","121"};
+ for(unsigned i=0;i<sizeof(oversized)/sizeof(oversized[0]);++i)CHECK(lab_small_number(oversized[i],1,120,&parsed)<0&&parsed==77);
+ CHECK(!lab_small_number("120",1,120,&parsed)&&parsed==120);
+ CHECK(lab_small_number("4294967297",1,9,&parsed)<0&&parsed==120);
+ CHECK(!supervisor_fixture_put(state,"fault.request","already latched\n"));int before=f.inspected;
+ CHECK(supervisor_attempt(state,state,owner,&ops,&plan)==SUPERVISOR_FAULT_CLOSED&&f.inspected==before);
+ CHECK(!unlinkat(state,"fault.request",0)&&!supervisor_fixture_put(state,"closed.request","LISA_CLOSE_V1 1 lisa requested\n"));
+ CHECK(supervisor_attempt(state,state,owner,&ops,&plan)==SUPERVISOR_RECOVERED);
+ struct mode_record mode;CHECK(mode_store_read(state,owner,&mode)==STORE_OK&&mode.revision==2&&mode.requested==LISA_MODE_LISA);
+ CHECK(supervisor_attempt(state,state,owner,&ops,&plan)==SUPERVISOR_IDLE);
+ CHECK(supervisor_attempt(state,state,owner,NULL,&plan)==SUPERVISOR_FAULT_INCOMPLETE);
+ const char *files[]={"mode.state","mode.lock","transition.lock","closed.request"};for(unsigned i=0;i<4;++i)CHECK(!unlinkat(state,files[i],0));
+ CHECK(!close(state)&&!rmdir(path));printf("{\"selftest\":\"supervisor-recovery\",\"checks\":%u,\"ok\":true,\"fixture_only\":true,\"audio_opened\":false}\n",checks);return 0;
+}
+
+#undef CHECK
+
 static int parser_selftest(void){
 #define VERIFY(x) do{if(!(x)){fprintf(stderr,"epoch mutation parser line %d\n",__LINE__);return 4;}}while(0)
  struct label_policy_names names;VERIFY(!label_policy_names("LISACQ_MUTATION",&names));
@@ -235,7 +295,7 @@ static int lab_scope_absent(void *pointer){
  }
  closedir(directory);return absent;
 }
-struct lab_context{struct epoch_mutation mutation;struct emergency_cache emergency;int state,emergency_enabled,emergency_closed;unsigned emergency_fault;unsigned fault,hold;};
+struct lab_context{struct epoch_mutation mutation;struct emergency_cache emergency;int state,emergency_enabled,emergency_closed,supervised,scope_busy_seen,emergency_prepared;struct supervisor_closure closure;unsigned emergency_fault;unsigned fault,hold;};
 static int lab_flag(int runtime,const char *name,const char *expected){
  int fd=openat(runtime,name,O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC);if(fd<0)return errno==ENOENT?0:-1;
  char text[96];ssize_t used=read(fd,text,sizeof(text));int valid=store_file_valid(fd,0);close(fd);
@@ -309,40 +369,56 @@ static int lab_emergency_resume(struct lab_context *context,const char *boot,con
   closed?"ok":lock==RECOVERY_BUSY?"busy":"denied",reconstructed?"true":"false",valid?"true":"false",reconstructed?(barrier?"true":"false"):"null",absent?"true":"false",policy_control_socket(AF_INET)?"true":"false",policy_control_socket(AF_INET6)?"true":"false");
  recovery_unlock(&lease);return closed&&valid&&barrier&&absent?0:4;
 }
-/* Called only by the optional emergency fixture, never interpreted as a
- * production actor/FD census. 1 healthy, 0 valid contention, -1 fault. */
-static int lab_health(struct lab_context *context){
- struct epoch_lease *epoch=context->mutation.lease;struct recovery_lease transition={.descriptor=-1};
- enum recovery_action action=recovery_lock(context->state,epoch->owner,&transition);
- if(action==RECOVERY_BUSY)return 0;
- if(action!=RECOVERY_CLEAR){context->emergency_closed=emergency_activate_observed(&context->emergency,context->state,epoch->runtime,lab_emergency_checkpoint,context)==0;return -1;}
- errno=0;
+/* Called under TRANS by the common supervisor. A valid epoch-reader lease
+ * blocks inspection, not permission or actor lifetime. */
+static enum supervisor_scope lab_supervised_scope(void *pointer,const struct recovery_plan *plan){
+ struct lab_context *context=pointer;struct epoch_lease *epoch=context->mutation.lease;errno=0;
  if(epoch_store_lock(epoch->runtime,epoch->owner,epoch)){
-  int busy=errno==EWOULDBLOCK;
-  if(!busy)context->emergency_closed=emergency_activate_observed(&context->emergency,context->state,epoch->runtime,lab_emergency_checkpoint,context)==0;
-  recovery_unlock(&transition);return busy?0:-1;
+  if(errno!=EWOULDBLOCK)return SUPERVISOR_SCOPE_BROKEN;
+  if(context->supervised&&!context->scope_busy_seen){context->scope_busy_seen=1;puts("{\"event\":\"supervisor-scope-busy\"}");fflush(stdout);}
+  return SUPERVISOR_SCOPE_BUSY;
  }
- struct mode_record mode;struct stat info;
- int healthy=!epoch_mutation_load(&context->mutation)&&mode_store_read(context->state,epoch->owner,&mode)==STORE_OK;
- if(healthy&&mode.requested==LISA_MODE_ALICE)healthy=context->mutation.record.phase==EPOCH_OPEN&&
+ int runtime=epoch->runtime;uid_t owner=epoch->owner;
+ enum supervisor_scope result=SUPERVISOR_SCOPE_BROKEN;
+ struct epoch_snapshot snapshot;struct mode_record mode;struct stat info;
+ if(epoch_mutation_load(&context->mutation)||epoch_mutation_snapshot(&context->mutation,&snapshot))goto done;
+ if(plan->action!=RECOVERY_CLEAR){result=SUPERVISOR_SCOPE_SOUND;goto done;}
+ if(mode_store_read(context->state,owner,&mode)!=STORE_OK)goto done;
+ int healthy;
+ if(mode.requested==LISA_MODE_ALICE)healthy=context->mutation.record.phase==EPOCH_OPEN&&
   mode.revision==context->mutation.record.revision&&epoch_mutation_verified(&context->mutation,0)&&
-  gate_permit_valid(epoch->runtime,epoch->owner,mode.revision,context->mutation.owner.boot)&&!mode_store_fault_pending(context->state,epoch->owner);
- else if(healthy)healthy=context->mutation.record.phase==EPOCH_CLOSED&&epoch_mutation_verified(&context->mutation,1)&&
-  fstatat(epoch->runtime,"vendor.permit",&info,AT_SYMLINK_NOFOLLOW)<0&&errno==ENOENT;
- if(!healthy)context->emergency_closed=emergency_activate_observed(&context->emergency,context->state,epoch->runtime,lab_emergency_checkpoint,context)==0;
- recovery_unlock(&transition);return healthy?1:-1;
+  gate_permit_valid(runtime,owner,mode.revision,context->mutation.owner.boot);
+ else healthy=context->mutation.record.phase==EPOCH_CLOSED&&mode.revision>=context->mutation.record.revision&&
+  epoch_mutation_verified(&context->mutation,1)&&fstatat(runtime,"vendor.permit",&info,AT_SYMLINK_NOFOLLOW)<0&&errno==ENOENT;
+ result=healthy?SUPERVISOR_SCOPE_SOUND:SUPERVISOR_SCOPE_BROKEN;
+done:
+ /* Do not carry EPOCH across the core's release/reacquisition of TRANS. */
+ epoch_store_unlock(epoch);epoch->runtime=runtime;epoch->owner=owner;return result;
 }
+static struct supervisor_closure lab_supervised_emergency(void *pointer){
+ struct lab_context *context=pointer;int runtime=context->mutation.lease->runtime;
+ int complete=emergency_activate_observed(&context->emergency,context->state,runtime,lab_emergency_checkpoint,context)==0;
+ int barrier=emergency_armed(&context->emergency,1);
+ int revoked=barrier&&close_revoke(runtime)==0;
+ int durable=complete&&emergency_read(context->state,0,1,&context->emergency.scope)==0;
+ context->closure=(struct supervisor_closure){barrier,revoked,durable};return context->closure;
+}
+/* Historical emergency fixture uses the same common engine now, while keeping
+ * its original report shape. No actor teardown is inferred from a fence. */
 static int lab_watch(struct lab_context *context,unsigned lifetime){
  struct epoch_lease *lease=context->mutation.lease;int runtime=lease->runtime;uid_t owner=lease->owner;
- if(epoch_store_lock(runtime,owner,lease)||epoch_mutation_load(&context->mutation))return -1;
- struct epoch_snapshot snapshot;if(epoch_mutation_snapshot(&context->mutation,&snapshot))return -1;
- if(context->emergency_enabled&&emergency_reserve(&context->mutation,&context->emergency))return -1;
- epoch_store_unlock(lease);lease->runtime=runtime;lease->owner=owner;
+ if(!context->emergency_prepared){
+  if(epoch_store_lock(runtime,owner,lease)||epoch_mutation_load(&context->mutation))return -1;
+  struct epoch_snapshot snapshot;if(epoch_mutation_snapshot(&context->mutation,&snapshot))return -1;
+  if(context->emergency_enabled&&emergency_reserve(&context->mutation,&context->emergency))return -1;
+  epoch_store_unlock(lease);lease->runtime=runtime;lease->owner=owner;
+ }
  struct process_stamp stamp;if(process_stamp(getpid(),&stamp))return -1;
  char ready[160];snprintf(ready,sizeof(ready),"LISA_RECOVERY_READY_V1 %s %ld %" PRIu64 "\n",context->mutation.owner.boot,(long)getpid(),stamp.ticks);
- if(lab_note(runtime,"watch.ready",ready))return -1;
+ if(lab_note(runtime,context->emergency_prepared?"supervisor-restart.ready":"watch.ready",ready))return -1;
  printf("{\"event\":\"recovery-watch\",\"state\":\"ready\",\"deadline_seconds\":%u}\n",lifetime);fflush(stdout);
  struct close_ops ops={lab_deny,lab_stop,lab_verify_closed,NULL,context};
+ struct supervisor_ops supervised_ops={lab_supervised_scope,lab_supervised_emergency,lab_stop,lab_stop,&ops,context};
  uint64_t deadline=guardian_milliseconds()+(uint64_t)lifetime*1000;unsigned busy=0,recovered=0,idle=0,faults=0;int stopped=0;
  while(guardian_milliseconds()<deadline){
   context->mutation.steps=0;
@@ -355,7 +431,21 @@ static int lab_watch(struct lab_context *context,unsigned lifetime){
    if(lease->descriptor>=0){epoch_store_unlock(lease);lease->runtime=runtime;lease->owner=owner;}
   }
   struct recovery_plan plan={0};
-  enum recovery_result result=recovery_attempt(context->state,runtime,owner,&ops,&plan);
+  enum recovery_result result;
+  if(context->emergency_enabled){
+   enum supervisor_result checked=supervisor_attempt(context->state,runtime,owner,&supervised_ops,&plan);
+   if(checked==SUPERVISOR_FAULT_CLOSED||checked==SUPERVISOR_FAULT_INCOMPLETE){
+    if(context->supervised){
+     printf("{\"event\":\"supervisor-fault\",\"result\":\"%s\",\"reason\":\"%s\",\"barrier_verified\":%s,\"permit_revoked\":%s,\"fault_synced\":%s,\"actors_absent\":%s,\"automatic_open\":false,\"audio_opened\":false,\"isolation_verified\":false}\n",
+      checked==SUPERVISOR_FAULT_CLOSED?"closed":"incomplete",plan.action==RECOVERY_INVALID?"journals":"scope",
+      context->closure.barrier_verified==1?"true":"false",context->closure.permit_revoked==1?"true":"false",
+      context->closure.fence_synced==1?"true":"false",lab_scope_absent(context)?"true":"false");
+    }else printf("{\"event\":\"emergency-fault\",\"latched\":%s,\"policy_closed\":%s,\"primary_preserved\":true,\"automatic_open\":false}\n",
+      mode_store_fault_pending(context->state,owner)?"true":"false",checked==SUPERVISOR_FAULT_CLOSED?"true":"false");
+    fflush(stdout);++faults;break;
+   }
+   result=checked==SUPERVISOR_RETRY?RECOVERY_RETRY:checked==SUPERVISOR_RECOVERED?RECOVERY_DONE:RECOVERY_IDLE;
+  }else result=recovery_attempt(context->state,runtime,owner,&ops,&plan);
   if(result==RECOVERY_RETRY){
    ++busy;if(busy==1){puts("{\"event\":\"recovery-watch\",\"state\":\"busy\"}");fflush(stdout);}
   }else if(result==RECOVERY_DONE){
@@ -365,17 +455,7 @@ static int lab_watch(struct lab_context *context,unsigned lifetime){
    printf("{\"event\":\"recovery-watch\",\"state\":\"recovered\",\"reason\":\"%s\",\"base_revision\":%" PRIu64 ",\"mode_revision\":%" PRIu64
     ",\"target\":\"%s\",\"policy_closed\":true,\"permit_revoked\":true}\n",
     plan.action==RECOVERY_CANCEL_OPEN?"cancel_open":"finish_close",plan.base_revision,mode.revision,mode_name(mode.requested));fflush(stdout);
-  }else if(result==RECOVERY_FAULT){++faults;break;}else {
-   ++idle;
-   if(context->emergency_enabled){
-    int health=lab_health(context);
-    if(health<0){
-     int closed=context->emergency_closed;
-     printf("{\"event\":\"emergency-fault\",\"latched\":%s,\"policy_closed\":%s,\"primary_preserved\":true,\"automatic_open\":false}\n",
-      mode_store_fault_pending(context->state,owner)?"true":"false",closed?"true":"false");fflush(stdout);++faults;break;
-    }
-   }
-  }
+  }else if(result==RECOVERY_FAULT){++faults;break;}else ++idle;
   if(lease->descriptor>=0){epoch_store_unlock(lease);lease->runtime=runtime;lease->owner=owner;}
   struct timespec delay={0,100000000};nanosleep(&delay,NULL);
  }
@@ -386,21 +466,20 @@ static int lab_watch(struct lab_context *context,unsigned lifetime){
  return stopped&&!faults?0:-1;
 }
 
-static uint64_t lab_number(const char *text){
- if(!text||*text<'0'||*text>'9')return 0;
- errno=0;char *end;unsigned long long value=strtoull(text,&end,10);return errno||*end?0:value;
-}
+
 int main(int argc,char **argv){
  if(argc==2&&(!strcmp(argv[1],"--selftest")||!strcmp(argv[1],"--station-selftest"))){
   int station=!strcmp(argv[1],"--station-selftest");if(station&&(getuid()||geteuid()||getgid()||getegid()))return 2;
   alarm(30);const char *base=station?"/data/opt/lisa-controller-lab":"/tmp";
-  return parser_selftest()||selftest(base)||recovery_selftest(base)||emergency_selftest(base);
+  return parser_selftest()||selftest(base)||recovery_selftest(base)||emergency_selftest(base)||supervisor_selftest(base);
  }
  if(getuid()||geteuid()||getgid()||getegid()||argc<3||argc>5)return 2;
  pid_t parent=getppid();if(prctl(PR_SET_PDEATHSIG,SIGKILL)||getppid()!=parent)return 2;
  int reserve=!strcmp(argv[1],"--lab-reserve"),status=!strcmp(argv[1],"--lab-status"),deny=!strcmp(argv[1],"--lab-deny");
  int crashing=!strcmp(argv[1],"--lab-watch-emergency-crash"),resuming=!strcmp(argv[1],"--lab-emergency-resume");
- int holding=!strcmp(argv[1],"--lab-open-hold"),emergency=!strcmp(argv[1],"--lab-watch-emergency")||crashing;
+ int recovering=!strcmp(argv[1],"--lab-supervise-recover");
+ int supervising=!strcmp(argv[1],"--lab-supervise")||recovering;
+ int holding=!strcmp(argv[1],"--lab-open-hold"),emergency=supervising||!strcmp(argv[1],"--lab-watch-emergency")||crashing;
  int watching=!strcmp(argv[1],"--lab-watch")||emergency;
  int opening=!strcmp(argv[1],"--lab-open")||holding,closing=!strcmp(argv[1],"--lab-close")||!strcmp(argv[1],"--lab-close-lisa");
  if(!reserve&&!status&&!deny&&!opening&&!closing&&!watching&&!resuming)return 2;
@@ -408,9 +487,10 @@ int main(int argc,char **argv){
  if((opening||closing)?argc<4:((!crashing&&argc>4)||(status&&argc!=3)))return 2;
  uint64_t base=opening||closing?lab_number(argv[3]):0;
  uint64_t fault=argc==(opening||closing?5:4)?lab_number(argv[argc-1]):0;if(fault>1000)return 2;
- unsigned lifetime=watching?(unsigned)lab_number(argv[3]):0;if(watching&&(!lifetime||lifetime>120))return 2;
- unsigned emergency_fault=crashing?(unsigned)lab_number(argv[4]):resuming?(unsigned)fault:0;
- if(emergency_fault>9||(crashing&&!emergency_fault)||(resuming&&argc==4&&!fault&&strcmp(argv[3],"0")))return 2;
+ unsigned lifetime=0,emergency_fault=0;
+ if(watching&&lab_small_number(argv[3],1,120,&lifetime))return 2;
+ if(crashing&&lab_small_number(argv[4],1,9,&emergency_fault))return 2;
+ if(resuming&&argc==4&&lab_small_number(argv[3],0,9,&emergency_fault))return 2;
  const char prefix[]="/bkupgrade/data/opt/lisa-controller-lab/epoch-mutation.";
  if(strncmp(argv[2],prefix,sizeof(prefix)-1))return 2;
  const char *suffix=argv[2]+sizeof(prefix)-1;size_t length=strlen(suffix);if(length<6||length>16)return 2;
@@ -425,11 +505,19 @@ int main(int argc,char **argv){
  snprintf(path,sizeof(path),"%s/state",argv[2]);int state=lab_directory(path);close(directory);
  if(runtime<0||state<0){if(runtime>=0)close(runtime);if(state>=0)close(state);return 3;}
  alarm(watching?lifetime+5:45);struct epoch_lease lease={.descriptor=-1,.runtime=runtime,.owner=0};int result=-1;
- struct lab_context context={.state=state,.emergency_enabled=emergency,.emergency_fault=emergency_fault,.fault=holding||watching?0:(unsigned)fault,.hold=holding?(unsigned)fault:0};
+ struct lab_context context={.state=state,.emergency_enabled=emergency,.supervised=supervising,.emergency_fault=emergency_fault,.fault=holding||watching?0:(unsigned)fault,.hold=holding?(unsigned)fault:0};
  context.mutation.lease=&lease;context.mutation.checkpoint=lab_checkpoint;context.mutation.context=&context;
  struct mode_record mode={0};char chain[32];
  if(policy_chain_read(runtime,0,chain,sizeof(chain)))goto done;
  if(resuming){int resumed=lab_emergency_resume(&context,boot,chain);close(runtime);close(state);return resumed;}
+ if(recovering){
+  struct recovery_lease transition={.descriptor=-1};
+  if(recovery_lock(state,0,&transition)==RECOVERY_CLEAR&&emergency_cache_reconstruct(runtime,0,boot,chain,&context.emergency)==0){
+   context.mutation.owner=context.emergency.scope;context.emergency_prepared=1;
+   recovery_unlock(&transition);result=lab_watch(&context,lifetime);
+  }
+  recovery_unlock(&transition);goto done;
+ }
  if((reserve||status||deny)&&epoch_store_lock(runtime,0,&lease))goto done;
  int found=epoch_owner_read(runtime,0,&context.mutation.owner);
  if(found<0)goto done;

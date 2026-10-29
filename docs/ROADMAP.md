@@ -164,3 +164,9 @@ barrier before permit revocation or actor teardown, including a failed re-denial
 after partial release. Native opening/closing/four-role fixtures pass; a pending
 fence without a verified barrier remains an incomplete transition. Permanent
 supervisor fault routing and production installation remain required.
+
+The [common supervisor recovery engine](SUPERVISOR_RECOVERY.md) now distinguishes
+valid contention from corrupt intent/policy, verifies separate closure facts and
+restarts through the independent emergency owner. Its composed fault trial and
+native decision fixtures pass. Permanent supervision, production actor/FD and
+filesystem/IPC boundaries, explicit repair and installation remain required.

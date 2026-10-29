@@ -293,7 +293,7 @@ def run_trial(host, ssh_config, script, evaluate, stem):
         targets[key], digests[name] = target, digest
     native = remote(targets["COORD"] + " --station-selftest", check=True)
     native_rows = [json.loads(line) for line in native.stdout.decode().splitlines()]
-    if len(native_rows) != 4 or any(row.get("ok") is not True for row in native_rows):
+    if len(native_rows) != 5 or any(row.get("ok") is not True for row in native_rows):
         raise RuntimeError("Native emergency selftests incomplete")
     identity = "pidof quasar_launcher2 maind alsa-audio-monitord hardvold chronyd unbound; cat /proc/sys/kernel/random/boot_id; sha256sum /etc/init.d/rcS /etc/init.d/S99zdropbear /etc/chrony.conf /etc/unbound/unbound.conf /etc/resolv.conf"
     before = remote(identity, check=True).stdout
