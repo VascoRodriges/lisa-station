@@ -177,6 +177,14 @@ int main(int argc,char **argv) {
     watcher=-1; close(channel[0]); spec.prepare=NULL;
     CHECK(!guardian_read(runtime,owner,"fixture.child",&record) && record.phase==G_RUNNING &&
         record.child==started.record.child && process_live(record.child,record.child_ticks),"running_journal_matches_process");
+    int contention=guardian_role_lock(state,owner,"mode.lock");
+    CHECK(contention>=0,"running_mode_lock_fixture");
+    struct timespec held={0,350000000}; nanosleep(&held,NULL);
+    int survived=process_live(record.child,record.child_ticks); close(contention);
+    CHECK(survived,"busy_mode_lock_is_not_revocation");
+    struct timespec settled={0,150000000}; nanosleep(&settled,NULL);
+    CHECK(!guardian_read(runtime,owner,"fixture.child",&record)&&record.phase==G_RUNNING&&
+        process_live(record.child,record.child_ticks),"valid_lease_after_contention");
     int fence=openat(state,"closed.request",O_WRONLY|O_CREAT|O_EXCL|O_CLOEXEC,0600);
     CHECK(fence>=0 && !store_write_all(fence,"pending\n",8) && !close(fence) &&
         guardian_start(state,runtime,owner,BOOT,&spec,&duplicate)==GUARD_DENIED,"pending_close_blocks_new_start");

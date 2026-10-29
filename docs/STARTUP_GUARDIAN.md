@@ -31,6 +31,14 @@ admission is revoked. This polling is **not a network privacy barrier**: the
 future transition executor must install selective vendor denial before relying
 on process shutdown or acknowledging isolation.
 
+A contended mode lock is not revocation. The guardian keeps its current child,
+continues handling its authenticated stop channel and retries admission after
+the writer releases the lock. An invalid/revoked permit or a changed revision
+still stops it. Previously, a brief exclusive admission review could stop live
+roles before a network barrier was installed. The regression fixture reproduced
+that failure with its own process, then passed with the lock held for 350 ms
+and the same running journal/child observed after release.
+
 The quasar child receives the previously qualified dedicated group, identity
 lock, capability reductions and `no_new_privs` before exec. It inherits no
 administrative sockets or mode lock. Its environment and startup limits are
@@ -108,7 +116,7 @@ python -m controller.qualify_guardian_startup YOUR_SPEAKER_SSH_ALIAS \
   --ssh-config YOUR_SSH_CONFIG --allow-temporary-stock-restart
 ```
 
-The guardian suite passed **54 checks on the speaker's writable storage** and
+The guardian suite passed **57 checks on the speaker's writable storage** and
 on a separate Linux host. Tests use their own fixture executable without set-ID bits or file capabilities,
 not the firmware's set-ID BusyBox. They cover concurrent mode/start, duplicate
 starts, actual exec observation, descriptor leakage (including above a lowered soft limit), permit revocation, closed

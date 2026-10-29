@@ -305,7 +305,10 @@ static inline void guardian_run(int state, int runtime, uid_t owner, const char 
         if (waitid(P_PID, child, &status, WEXITED | WNOHANG | WNOWAIT) || status.si_pid) break;
         struct gate_lease current = {-1,0};
         enum gate_result allowed = gate_acquire_running(state, runtime, owner, boot, &current);
-        int same = allowed == GATE_GRANTED && current.revision == record->revision;
+        /* A contended mode lock is not evidence of permit revocation. Keep
+         * serving the authenticated stop channel and recheck after release;
+         * shutdown before the close executor installs denial can emit traffic. */
+        int same = allowed == GATE_BUSY || (allowed == GATE_GRANTED && current.revision == record->revision);
         gate_release(&current);
         if (!same) break;
         if (guardian_readable(control, 100)) {
