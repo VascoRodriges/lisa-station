@@ -97,4 +97,8 @@ coordinator ownership and production boot remain pending; its separate SIGKILL
 watchdog trial restored stock services and all owned rules successfully.
 The [bounded boot dispatcher](BOOT_DISPATCH.md) now has fixed helper entry points
 and real-shell failure fixtures preserving recovery. It is not installed;
-the coordinator, hardware adapter, installer and cold-boot acceptance remain.
+the coordinator's service handlers, hardware adapter, installer and cold-boot acceptance remain.
+The [closed bootstrap coordinator](BOOTSTRAP.md) now durably reserves its
+per-boot namespace before selective policy installation, repairs known ordered
+subsets and refuses unknown rules. Its actual-kernel trial preserves ordinary
+stock services and does not claim installed isolation.

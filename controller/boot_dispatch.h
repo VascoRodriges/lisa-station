@@ -7,7 +7,6 @@ static const char lisa_boot_dispatch[]=
 "# Lisa Station boot dispatcher. Keep recovery independent of the controller.\n"
 "runner=/bkupgrade/data/opt/lisa-station/bin/station-init\n"
 "boot_ready=0\n"
-"if \"$runner\" --bootstrap </dev/null; then boot_ready=1; fi\n"
 "for i in /etc/init.d/S??*; do\n"
 "    [ -f \"$i\" ] || continue\n"
 "    # Network initialization precedes the first gated service. Open recovery\n"
@@ -24,5 +23,11 @@ static const char lisa_boot_dispatch[]=
 "        *.sh) (trap - INT QUIT TSTP; set -- start; . \"$i\");;\n"
 "        *) \"$i\" start;;\n"
 "    esac\n"
+"    # Establish policy after normal loopback initialization, before Wi-Fi\n"
+"    # and all gated actors. A missing/failed loopback stage never opens gates.\n"
+"    stage_result=$?\n"
+"    if [ \"$i\" = /etc/init.d/S40net.lo ] && [ \"$stage_result\" = 0 ]; then\n"
+"        if \"$runner\" --bootstrap </dev/null; then boot_ready=1; fi\n"
+"    fi\n"
 "done\n";
 #endif

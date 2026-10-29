@@ -56,11 +56,14 @@ static int fixture_case(const char *root,const char *self,unsigned mode) {
         diagnostics_text(root,"/etc/init.d/S01fixture.sh","[ -z \"$lisa_fixture_leak\" ] && echo SOURCE_ISOLATED >> /run/trace\n")||
         diagnostics_text(root,"/etc/init.d/S99zdropbear","#!/bin/sh\necho RECOVERY:$1 >> /run/trace\n")||
         diagnostics_text(root,"/etc/init.d/rcS",lisa_boot_dispatch)) return 13;
+    if(mode!=6&&diagnostics_text(root,"/etc/init.d/S40net.lo",mode==5?
+        "#!/bin/sh\necho LOOPBACK:$1 >> /run/trace\nexit 1\n":"#!/bin/sh\necho LOOPBACK:$1 >> /run/trace\n")) return 13;
     char path[PATH_MAX];
     for(unsigned i=0;i<5;++i) {
         snprintf(path,sizeof(path),"%s%s",root,gated[i]); if(chmod(path,0700)) return 14;
     }
     snprintf(path,sizeof(path),"%s/etc/init.d/S99zdropbear",root); if(chmod(path,0700)) return 14;
+    if(mode!=6) { snprintf(path,sizeof(path),"%s/etc/init.d/S40net.lo",root); if(chmod(path,0700)) return 14; }
     if(mode==1&&diagnostics_text(root,"/run/fail-bootstrap","")) return 15;
     if(mode==3&&diagnostics_text(root,"/run/fail-gates","")) return 15;
     if(mode==4&&diagnostics_text(root,"/run/hang-bootstrap","")) return 15;
@@ -73,10 +76,11 @@ static int fixture_case(const char *root,const char *self,unsigned mode) {
     ssize_t bytes=read(fd,actual,sizeof(actual)-1); close(fd);
     if(bytes<0||bytes==(ssize_t)sizeof(actual)-1) return 18;
     actual[bytes]=0;
-    const char *normal="--bootstrap\nSYSTEM:start\nSOURCE_ISOLATED\nRECOVERY:start\n--hardware-start\n--diagnostics-stage\n--time-start\n--dns-start\n--vendor-start\nRECOVERY:start\n";
-    const char *closed="--bootstrap\nSYSTEM:start\nSOURCE_ISOLATED\nRECOVERY:start\nRECOVERY:start\n";
-    const char *missing="SYSTEM:start\nSOURCE_ISOLATED\nRECOVERY:start\nRECOVERY:start\n";
-    return strcmp(actual,mode==2?missing:(mode==1||mode==4)?closed:normal)?19:0;
+    const char *normal="SYSTEM:start\nSOURCE_ISOLATED\nLOOPBACK:start\n--bootstrap\nRECOVERY:start\n--hardware-start\n--diagnostics-stage\n--time-start\n--dns-start\n--vendor-start\nRECOVERY:start\n";
+    const char *closed="SYSTEM:start\nSOURCE_ISOLATED\nLOOPBACK:start\n--bootstrap\nRECOVERY:start\nRECOVERY:start\n";
+    const char *missing="SYSTEM:start\nSOURCE_ISOLATED\nLOOPBACK:start\nRECOVERY:start\nRECOVERY:start\n";
+    const char *no_loopback="SYSTEM:start\nSOURCE_ISOLATED\nRECOVERY:start\nRECOVERY:start\n";
+    return strcmp(actual,mode==6?no_loopback:(mode==2||mode==5)?missing:(mode==1||mode==4)?closed:normal)?19:0;
 }
 int main(int argc,char **argv) {
     if(argc==3&&!strcmp(argv[1],"--fixture-stage")) return fixture_stage(argv[2]);
@@ -86,7 +90,7 @@ int main(int argc,char **argv) {
     char self[PATH_MAX],root[]="/data/opt/lisa-controller-lab/boot-dispatch.XXXXXX";
     ssize_t size=readlink("/proc/self/exe",self,sizeof(self)-1); CHECK(size>0&&size<(ssize_t)sizeof(self)-1); self[size]=0;
     CHECK(mkdtemp(root)!=NULL);
-    for(unsigned mode=0;mode<5;++mode) {
+    for(unsigned mode=0;mode<7;++mode) {
         pid_t child=fork(); CHECK(child>=0);
         if(!child) _exit(fixture_case(root,self,mode));
         int status; CHECK(waitpid(child,&status,0)==child);
@@ -95,6 +99,6 @@ int main(int argc,char **argv) {
         CHECK(WIFEXITED(status)&&WEXITSTATUS(status)==0);
     }
     CHECK(!rmdir(root));
-    printf("{\"selftest\":\"boot-dispatch\",\"checks\":%u,\"cases\":5,\"ok\":true,\"real_init_changed\":false,\"audio_opened\":false}\n",checks);
+    printf("{\"selftest\":\"boot-dispatch\",\"checks\":%u,\"cases\":7,\"ok\":true,\"real_init_changed\":false,\"audio_opened\":false}\n",checks);
     return 0;
 }

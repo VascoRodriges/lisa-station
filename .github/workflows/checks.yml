@@ -55,6 +55,8 @@ jobs:
       - run: python controller/build.py --target station-init
       - run: python controller/build.py --target boot-runner-probe
       - run: python controller/build.py --target boot-dispatch-probe
+      - run: python controller/build.py --target station-boot
+      - run: python controller/build.py --target boot-state-probe
       - name: Exercise mode storage on the host
         run: |
           cc -O2 -Wall -Wextra -Werror controller/mode_store_probe.c -o build/mode-store-host
@@ -88,6 +90,9 @@ jobs:
           ./build/boot-runner-host
           cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/station_init.c -o build/station-init-host
           cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/boot_dispatch_probe.c -o build/boot-dispatch-host
+          cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/station_boot.c -o build/station-boot-host
+          cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/boot_state_probe.c -o build/boot-state-host
+          ./build/boot-state-host
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: station-controller-armhf
@@ -196,3 +201,11 @@ jobs:
         with:
           name: station-boot-dispatch-qualification-armhf
           path: build/boot-dispatch-probe.armhf
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: station-boot-coordinator-armhf
+          path: build/station-boot.armhf
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: station-boot-state-qualification-armhf
+          path: build/boot-state-probe.armhf

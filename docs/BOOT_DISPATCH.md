@@ -2,8 +2,9 @@
 
 The development tree now includes `station-init`, a fixed entry-point runner,
 and an exported rcS dispatcher. **Neither is installed into the real boot path.**
-The production `station-boot` coordinator and transactional installer are still
-required; copying this dispatcher alone would leave its gated services unavailable.
+The [closed bootstrap coordinator](BOOTSTRAP.md) now exists, but its service
+handlers and transactional installer are still required; copying this dispatcher
+alone would leave its gated services unavailable.
 The HA release remains diagnostic and `isolation_verified` stays false.
 
 ## Fixed boundary
@@ -25,7 +26,9 @@ only its own unreaped child and process group, then reaps that child.
 The exported dispatcher retains ordinary init ordering and isolated sourcing
 of reviewed `.sh` scripts. It routes the ALSA hardvolume daemon, audio monitor,
 clock, resolver and main vendor startup through the fixed runner. Failed
-bootstrap suppresses subsequent gated calls. A failed gated call never invokes
+bootstrap suppresses subsequent gated calls. Bootstrap runs only after successful
+normal loopback initialization, before Wi-Fi and the first gated service; a
+missing or failed loopback stage keeps the gates closed. A failed gated call never invokes
 the original script. Existing network initialization still runs, and the
 unchanged independent SSH init is called before the first gated service as well
 as at its usual position. The coordinator's actual ready/mode state must be
@@ -44,11 +47,12 @@ environment/FD/core-dump boundaries, successful and failing helpers, timeout,
 subsequent recovery and child reaping. Host fixture binaries must have trusted
 permissions; a group-writable build is correctly rejected.
 
-The dispatcher probe passed **18 checks across five cases on the speaker**. It
+The dispatcher probe passed **24 checks across seven cases on the speaker**. It
 uses the actual exported script, real BusyBox shell and bounded runner in a
 private mount namespace/chroot with synthetic init scripts. Normal startup,
 failed bootstrap, missing runner, failing stage handlers and a hanging bootstrap
-all preserve synthetic recovery and prevent original vendor fallbacks. Sourced
+all preserve synthetic recovery and prevent original vendor fallbacks. Failed
+and missing loopback initialization also keep the gates closed. Sourced
 script variables do not leak to later init entries. No real init script, audio
 device, network service or hardware setup is executed. The firmware's set-ID
 BusyBox is copied as a plain private executable for this fixture; production
@@ -58,13 +62,13 @@ The actual uninstalled runner separately refused bootstrap/vendor-start with
 the fixed coordinator absent. ARM and host builds exported identical dispatcher
 bytes. The real boot/recovery file digests, read-only rootfs, current services,
 OTA protection and idle lab state were preserved. The existing Python/HA suite
-passed **572 tests**; the three new native targets bring the build matrix to 27.
+passed **597 tests**; with the coordinator/state probe the native matrix is 29.
 
 Qualified digests:
 
-- station-init: `b32ac1f6261fcbb40c5668a583d339923852958c53b73391fc8eabcfbd18c8d8`
+- station-init: `f1610a0c9dcdface590b0549a490dd25ece55f9315b9bb95f78111495cd858b2`
 - runner probe: `c031c81bedb5eedd395070f6dbcb3a796e339c5fdb4b41f72931bffd997f830c`
-- dispatcher probe: `ae60e8104566415e57061306f51afba6a618fbddc89c81e2919abee841c7dc0e`
+- dispatcher probe: `08a2e909d87b430ccf6d6014f0d177fda875cfbdf00b3c23153918fd8c04be4b`
 
 ```sh
 python controller/build.py --target station-init
@@ -74,8 +78,8 @@ python controller/build.py --target boot-dispatch-probe
 
 ## Deployment still required
 
-Implement the fixed coordinator with verified mode/policy ownership, independent
-DNS/time and the constrained hardware adapter. Bind every vendor admission to
+Complete the fixed coordinator's independent DNS/time and constrained hardware
+handlers; its closed-policy ownership bootstrap is qualified separately. Bind every vendor admission to
 the verified current boot and explicit intent. Prepare an immutable private
 firmware/init manifest, reject unsupported entry changes and make direct init
 calls obey the same gates. The installer must verify all payloads/backups before
