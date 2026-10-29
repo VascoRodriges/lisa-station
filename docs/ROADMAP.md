@@ -8,7 +8,7 @@ This roadmap distinguishes shipped code from acceptance targets.
 |---|---|---|---|
 | 1 | Status controller, pinned transport, UI setup and diagnostic entities | Real device status; incompatible data rejected; offline state safe; no false privacy claim | v0.1.0 |
 | 2 | Speaker-local vendor isolation | Cover senders outside the main launcher, descendants, old sockets, local relays, DNS, IPv4/IPv6 and telemetry queues; other applications retain internet | Actual four-role startup/close composed with pre-start conntrack label admission; collector/telemetry boundaries implemented; platform shared state, receiver/IPC, old unmanaged flows, packet queues and boot composition pending; real SDK batch remains unmaterialized |
-| 3 | Persistent mode controller | Alice / Lisa / Paused, serialized transitions, verified actual state, boot enforcement before vendor startup, fail closed, explicit return to Alice | Durable close engine: 65 transaction, 34 admission and 57 guardian checks passed; lock contention no longer causes premature actor shutdown; production callbacks, boot gates and Alice return pending |
+| 3 | Persistent mode controller | Alice / Lisa / Paused, serialized transitions, verified actual state, boot enforcement before vendor startup, fail closed, explicit return to Alice | Composed explicit open/close and closed-mode rollover qualified; bounded local watcher recovers killed opening/closing workers without automatic Alice return; permanent supervisor, runtime health admission, production actor/boot composition and installation pending |
 | 4 | Permanent speech service | No workstation dependency; local KWS, standalone VQE, target-speaker extraction on a server, Assist through response playback, physical mute honored | Bounded research prototype exists outside this release |
 | 5 | Assist satellite and voice settings | Pipeline choice, listening/processing/responding states, LED feedback, measured latency and recovery | Planned |
 | 6 | Independent media player | Playback/volume/metadata, files/URLs/radio, Music Assistant without the old Yandex Station backend, announcements and volume restoration | Planned |
@@ -139,3 +139,9 @@ The [closed-mode rollover](CLOSED_MODES.md) now changes Lisa/Paused intent witho
 an unfenced interval and invalidates an early cancelled opener. Native crash
 fixtures and a composed kernel trial pass. Autonomous recovery and production
 actor/voice/boot installation remain required.
+
+The [bounded recovery watcher](RECOVERY_WATCH.md) now respects live transition
+leases, cancels an abandoned opening and finishes an abandoned close with its
+original target. A worker-independent kernel trial passes with retired-flow
+denial and working unrelated controls. This is a bounded laboratory process;
+permanent supervision, fault latching, runtime admission and installation remain.

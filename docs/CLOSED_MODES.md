@@ -50,5 +50,6 @@ python -m controller.qualify_closed_rollover YOUR_SPEAKER_SSH_ALIAS \
   --ssh-config YOUR_SSH_CONFIG --run-private-intent-trial
 ```
 
-Autonomous recovery after controller death, production actor/FD inventory and
+The later [bounded watcher](RECOVERY_WATCH.md) adds automatic recovery after
+worker death. Permanent supervision, production actor/FD inventory and
 filesystem/IPC boundaries, real boot admission and installation remain required.
