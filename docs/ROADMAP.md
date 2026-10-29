@@ -170,3 +170,9 @@ valid contention from corrupt intent/policy, verifies separate closure facts and
 restarts through the independent emergency owner. Its composed fault trial and
 native decision fixtures pass. Permanent supervision, production actor/FD and
 filesystem/IPC boundaries, explicit repair and installation remain required.
+
+The [platform storage foundation](PLATFORM_STORAGE.md) now creates fresh bounded
+DATA/TMP/shared-memory epochs without exposing the host vendor DATA tree. Two
+own-ELF epochs and pinned seed/race checks pass. Actual SDK, IPC/hardware and
+identity lifecycle integration remain required; production switching is still
+uninstalled.
