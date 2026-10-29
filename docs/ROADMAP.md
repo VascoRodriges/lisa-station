@@ -75,3 +75,7 @@ but SDK batch materialization is explicitly unobserved and full acceptance fails
 The [UNIX peer/holder audit](IPC_PEERS.md) adds kernel peer/cookie evidence and
 explicit cross-role, shared-holder and datagram gaps. It is read-only; composite
 IPC enforcement and receiver-data lifecycle remain pending.
+The [shared guarded-role close](COMPOSITE_ROLES.md) now verifies all four group
+barriers before common permit revocation and stops/verifies every role. A
+two-epoch real-code trial passes; full sender migration and relay/flow/boot
+composition remain pending.

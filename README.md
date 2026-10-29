@@ -92,6 +92,9 @@ real SDK batch materialization remains an explicit failed acceptance criterion.
 The [UNIX peer/holder audit](docs/IPC_PEERS.md) identifies local relay candidates
 without reading socket names or payloads. Unresolved datagram/shared-holder and
 receiver-data gaps remain explicit; it does not apply a policy.
+The [shared guarded-role close](docs/COMPOSITE_ROLES.md) verifies all four
+group barriers before shared permit revocation and attempts every role's stop.
+Its two-epoch trial passes; it is separate from full migration and boot control.
 
 ## Development
 

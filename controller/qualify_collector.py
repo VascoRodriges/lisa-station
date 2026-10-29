@@ -199,7 +199,17 @@ def evaluate_events(events):
     )
 
 
-def run_trial(args, role, script, profile_factory, event_evaluator, boundary_evaluator=None):
+def run_trial(
+    args,
+    role,
+    script,
+    profile_factory,
+    event_evaluator,
+    boundary_evaluator=None,
+    *,
+    additional_profiles=None,
+    report_name=None,
+):
     if role not in {"collector", "telemetry"}:
         raise ValueError("unsupported epoch role")
     if args.host.startswith("-"):
@@ -224,7 +234,18 @@ def run_trial(args, role, script, profile_factory, event_evaluator, boundary_eva
     profile_digest = hashlib.sha256(profile).hexdigest()
     target = "/data/opt/lisa-controller-lab/station-service-" + digest[:16]
     profile_target = "/data/opt/lisa-controller-lab/" + role + "-profile-" + profile_digest[:16]
-    for path, payload, mode in ((target, binary, "700"), (profile_target, profile, "600")):
+    artifacts = [(target, binary, "700"), (profile_target, profile, "600")]
+    if additional_profiles:
+        if set(additional_profiles) != {"TELEMETRY"} or role != "collector" or report_name != "roles":
+            raise ValueError("unsupported additional laboratory profile")
+        for name, factory in additional_profiles.items():
+            payload = json.dumps(factory(stock, lab_clone=True), separators=(",", ":")).encode()
+            path = "/data/opt/lisa-controller-lab/extra-profile-" + hashlib.sha256(payload).hexdigest()[:16]
+            artifacts.append((path, payload, "600"))
+            script = script.replace("@" + name + "@", path)
+    if report_name not in (None, "roles"):
+        raise ValueError("unsupported qualification report")
+    for path, payload, mode in artifacts:
         remote(
             "umask 077; cat > " + path + ".new && chmod " + mode + " " + path + ".new",
             input=payload,
@@ -285,7 +306,9 @@ done
             or (row.get("event") == "telemetry-epoch-closed" and row.get("batch_materialized") is True)
             for row in events
         )
-    (root / "build" / (role + "-qualification.json")).write_text(
+    if report_name == "roles":
+        report["closed_scope"] = "guarded_roles"
+    (root / "build" / ((report_name or role) + "-qualification.json")).write_text(
         json.dumps(report, indent=2) + "\n", encoding="utf-8"
     )
     print(json.dumps({k: v for k, v in report.items() if k != "events"}, indent=2))

@@ -71,8 +71,24 @@ static inline int policy_chain_read(int runtime,uid_t owner,char *chain,size_t c
     return 0;
 }
 
-static inline int policy_group_denied(const char *chain,unsigned group) {
+static inline int policy_expected_groups(const char *chain,const unsigned *groups,unsigned count,char *out,size_t capacity) {
+    if(!chain||!groups||!count||count>4||strncmp(chain,"LISACQ_",7)||strlen(chain)<8||strlen(chain)>27) return -1;
+    for(const char *at=chain+7;*at;++at)
+        if(!((*at>='A'&&*at<='Z')||(*at>='0'&&*at<='9')||*at=='_')) return -1;
+    int used=snprintf(out,capacity,"-N %s\n",chain);
+    if(used<0||(size_t)used>=capacity) return -1;
+    for(unsigned i=0;i<count;++i) {
+        if(groups[i]<57342||groups[i]>57345||(i&&groups[i]<=groups[i-1])) return -1;
+        int more=snprintf(out+used,capacity-(size_t)used,"-A %s -m owner --gid-owner %u -j DROP\n",chain,groups[i]);
+        if(more<0||(size_t)more>=capacity-(size_t)used) return -1;
+        used+=more;
+    }
+    return used;
+}
+static inline int policy_groups_denied(const char *chain,const unsigned *groups,unsigned count) {
     const char *programs[]={"/usr/sbin/iptables","/usr/sbin/ip6tables"};
+    char expected_groups[1024];
+    if(policy_expected_groups(chain,groups,count,expected_groups,sizeof(expected_groups))<0) return 0;
     for(unsigned i=0;i<2;++i) {
         char rules[8192],expected[512];
         char *name=i?"ip6tables":"iptables";
@@ -80,8 +96,7 @@ static inline int policy_group_denied(const char *chain,unsigned group) {
          * serialize --gid-owner as the numeric group on this firmware. */
         char *const own_args[]={name,"-S",(char*)chain,NULL};
         if(policy_capture(programs[i],own_args,rules,sizeof(rules))) return 0;
-        snprintf(expected,sizeof(expected),"-N %s\n-A %s -m owner --gid-owner %u -j DROP\n",chain,chain,group);
-        if(strcmp(rules,expected)) return 0;
+        if(strcmp(rules,expected_groups)) return 0;
         char *const output_args[]={name,"-S","OUTPUT",NULL};
         if(policy_capture(programs[i],output_args,rules,sizeof(rules)) || strncmp(rules,"-P OUTPUT ",10)) return 0;
         const char *first=strchr(rules,'\n');
@@ -89,5 +104,8 @@ static inline int policy_group_denied(const char *chain,unsigned group) {
         if(!first || strncmp(first+1,expected,strlen(expected))) return 0;
     }
     return 1;
+}
+static inline int policy_group_denied(const char *chain,unsigned group) {
+    return policy_groups_denied(chain,&group,1);
 }
 #endif

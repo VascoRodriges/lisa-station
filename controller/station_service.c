@@ -17,6 +17,7 @@
 #include "telemetry_guard.h"
 #include "closed_transition.h"
 #include "policy_check.h"
+#include "composite_roles.h"
 
 #define VENDOR_GID 57342
 #define DIAGNOSTICS_GID 57343
@@ -249,6 +250,27 @@ static int stop_quasar(void *pointer) {
 static int verify_quasar_closed(void *pointer) {
     return !actors_absent(NULL) || deny_quasar(pointer);
 }
+static int deny_roles(void *pointer) {
+    struct close_quasar_context *context=pointer;
+    return context->policy_valid&&policy_groups_denied(context->chain,composite_groups,COMPOSITE_ROLE_COUNT)?0:-1;
+}
+static int absent_role(void *pointer,unsigned role) {
+    (void)pointer; if(role>=COMPOSITE_ROLE_COUNT) return -1;
+    unsigned previous=selected_gid; selected_gid=composite_groups[role];
+    int absent=actors_absent(NULL); selected_gid=previous; return absent?0:-1;
+}
+static int stop_role(void *pointer,unsigned role) {
+    struct close_quasar_context *context=pointer;
+    if(role>=COMPOSITE_ROLE_COUNT) return -1;
+    if(!absent_role(pointer,role)) return 0;
+    struct guardian_spec spec={.role=composite_names[role]};
+    (void)guardian_stop(context->runtime,0,context->boot,&spec);
+    for(unsigned i=0;i<30;++i) {
+        if(!absent_role(pointer,role)) return 0;
+        struct timespec delay={0,50000000}; nanosleep(&delay,NULL);
+    }
+    return -1;
+}
 
 int main(int argc,char **argv) {
     if (geteuid() || argc<2 || argc>3) return 2;
@@ -257,6 +279,7 @@ int main(int argc,char **argv) {
     lab=!strncmp(operation,"--lab-",6);
     if ((lab&&argc!=3) || (!lab&&argc!=2)) return 2;
     const char *action=operation+(lab?6:2);
+    int composite=!strcmp(action,"close-roles")||!strcmp(action,"check-roles-policy");
     int diagnostics=!strcmp(action,"start-diagnostics")||!strcmp(action,"stop-diagnostics")||
         !strcmp(action,"reconcile-diagnostics")||!strcmp(action,"close-diagnostics")||!strcmp(action,"check-diagnostics-policy")||
         !strcmp(action,"inspect-diagnostics");
@@ -273,7 +296,8 @@ int main(int argc,char **argv) {
         (!lab || (strcmp(action,"request-paused") && strcmp(action,"close-quasar") && strcmp(action,"check-quasar-policy") &&
         strcmp(action,"close-diagnostics") && strcmp(action,"check-diagnostics-policy") &&
         strcmp(action,"close-collector") && strcmp(action,"check-collector-policy") &&
-        strcmp(action,"close-telemetry") && strcmp(action,"check-telemetry-policy")&&strcmp(action,"observe-telemetry-close")))) return 2;
+        strcmp(action,"close-telemetry") && strcmp(action,"check-telemetry-policy")&&strcmp(action,"observe-telemetry-close")&&
+        strcmp(action,"close-roles")&&strcmp(action,"check-roles-policy")))) return 2;
     selected_gid=telemetry?TELEMETRY_GID:collector?COLLECTOR_GID:diagnostics?DIAGNOSTICS_GID:VENDOR_GID;
     int fd=open("/proc/device-tree/compatible",O_RDONLY|O_CLOEXEC);
     char compatible[512]; ssize_t size=fd>=0?read(fd,compatible,sizeof(compatible)):-1;
@@ -376,12 +400,12 @@ int main(int argc,char **argv) {
         else if(!strcmp(action,"close-quasar") || !strcmp(action,"check-quasar-policy") ||
             !strcmp(action,"close-diagnostics") || !strcmp(action,"check-diagnostics-policy") ||
             !strcmp(action,"close-collector") || !strcmp(action,"check-collector-policy") ||
-            !strcmp(action,"close-telemetry") || !strcmp(action,"check-telemetry-policy")) {
+            !strcmp(action,"close-telemetry") || !strcmp(action,"check-telemetry-policy") || composite) {
             struct mode_record current; struct close_record pending;
             struct close_quasar_context context={.state=state,.runtime=runtime,.boot=boot,.spec=&spec};
             context.policy_valid=!policy_chain_read(runtime,0,context.chain,sizeof(context.chain));
-            if(!strcmp(action,"check-quasar-policy")||!strcmp(action,"check-diagnostics-policy")||!strcmp(action,"check-collector-policy")||!strcmp(action,"check-telemetry-policy")) {
-                result=deny_quasar(&context)?GUARD_FAILED:GUARD_OK;
+            if(!strcmp(action,"check-quasar-policy")||!strcmp(action,"check-diagnostics-policy")||!strcmp(action,"check-collector-policy")||!strcmp(action,"check-telemetry-policy")||!strcmp(action,"check-roles-policy")) {
+                result=(composite?deny_roles(&context):deny_quasar(&context))?GUARD_FAILED:GUARD_OK;
                 if(result==GUARD_OK) {
                     control4=policy_control_socket(AF_INET); control6=policy_control_socket(AF_INET6);
                     if(!control4 || !control6) result=GUARD_FAILED;
@@ -390,7 +414,9 @@ int main(int argc,char **argv) {
             else if(mode_store_read(state,0,&current)==STORE_OK) {
                 uint64_t base=current.revision;
                 if(!close_read(state,0,&pending)) base=pending.base_revision;
-                struct close_ops ops={deny_quasar,stop_quasar,verify_quasar_closed,NULL,&context};
+                struct composite_roles roles={deny_roles,stop_role,absent_role,&context};
+                struct close_ops ops={composite?composite_deny:deny_quasar,composite?composite_stop:stop_quasar,
+                    composite?composite_verify:verify_quasar_closed,NULL,composite?(void*)&roles:(void*)&context};
                 enum close_result closed=close_execute(state,runtime,0,base,LISA_MODE_PAUSED,&ops);
                 result=closed==CLOSE_OK?GUARD_OK:closed==CLOSE_BUSY?GUARD_BUSY:GUARD_FAILED;
                 if(result==GUARD_OK) started.record.revision=base+1;
@@ -410,12 +436,12 @@ int main(int argc,char **argv) {
     const char *phase=state>=0&&!close_read(state,0,&closed_record)?close_phase_name(closed_record.phase):"none";
     printf("{\"event\":\"station-service\",\"operation\":\"%s\",\"result\":\"%s\",\"guardian_pid\":%ld,"
         "\"child_pid\":%ld,\"revision\":%" PRIu64 ",\"transition_phase\":\"%s\",\"diagnostics_jail_verified\":%s,"
-        "\"collector_jail_verified\":%s,\"telemetry_jail_verified\":%s,\"telemetry_batch_materialized\":%s,\"telemetry_batch_paths\":%u,\"isolation_verified\":false}\n",action,names[result],
+        "\"collector_jail_verified\":%s,\"telemetry_jail_verified\":%s,\"telemetry_batch_materialized\":%s,\"telemetry_batch_paths\":%u,\"closed_scope\":\"%s\",\"isolation_verified\":false}\n",action,names[result],
         (long)started.record.guardian,(long)started.record.child,started.record.revision,phase,
         diagnostics&&result==GUARD_OK&&(!strcmp(action,"start-diagnostics")||!strcmp(action,"inspect-diagnostics"))?"true":"false",
         collector&&result==GUARD_OK&&(!strcmp(action,"start-collector")||!strcmp(action,"inspect-collector"))?"true":"false",
-        telemetry&&result==GUARD_OK&&(!strcmp(action,"start-telemetry")||!strcmp(action,"inspect-telemetry"))?"true":"false",batch_materialized?"true":"false",(unsigned)batch_materialized);
-    if((!strcmp(action,"check-quasar-policy")||!strcmp(action,"check-diagnostics-policy")||!strcmp(action,"check-collector-policy")||!strcmp(action,"check-telemetry-policy")) && result==GUARD_OK)
+        telemetry&&result==GUARD_OK&&(!strcmp(action,"start-telemetry")||!strcmp(action,"inspect-telemetry"))?"true":"false",batch_materialized?"true":"false",(unsigned)batch_materialized,composite?"guarded_roles":"single_role");
+    if((!strcmp(action,"check-quasar-policy")||!strcmp(action,"check-diagnostics-policy")||!strcmp(action,"check-collector-policy")||!strcmp(action,"check-telemetry-policy")||!strcmp(action,"check-roles-policy")) && result==GUARD_OK)
         printf("{\"event\":\"policy-controls\",\"ipv4\":%s,\"ipv6\":%s}\n",control4?"true":"false",control6?"true":"false");
     if(state>=0) close(state);
     if(runtime>=0) close(runtime);

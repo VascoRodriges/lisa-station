@@ -29,6 +29,7 @@ parser.add_argument(
         "collector-guard-probe",
         "telemetry-guard-probe",
         "unix-peer-probe",
+        "composite-roles-probe",
     ),
     default="station-ctl",
 )
@@ -54,6 +55,7 @@ sources = {
     "collector-guard-probe": "collector_guard_probe.c",
     "telemetry-guard-probe": "telemetry_guard_probe.c",
     "unix-peer-probe": "unix_peer_probe.c",
+    "composite-roles-probe": "composite_roles_probe.c",
 }
 output = root / "build" / (args.target + ".armhf")
 output.parent.mkdir(exist_ok=True)
