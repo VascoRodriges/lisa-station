@@ -32,6 +32,7 @@ parser.add_argument(
         "composite-roles-probe",
         "ipc-guard-probe",
         "udp-evidence-probe",
+        "connmark-probe",
     ),
     default="station-ctl",
 )
@@ -60,6 +61,7 @@ sources = {
     "composite-roles-probe": "composite_roles_probe.c",
     "ipc-guard-probe": "ipc_guard_probe.c",
     "udp-evidence-probe": "udp_evidence_probe.c",
+    "connmark-probe": "connmark_probe.c",
 }
 output = root / "build" / (args.target + ".armhf")
 output.parent.mkdir(exist_ok=True)

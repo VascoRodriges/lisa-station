@@ -89,3 +89,6 @@ filesystem isolation and permanent deployment remain pending.
 The [UDP holder audit](UDP_EVIDENCE.md) now verifies endpoint/FD metadata and
 records the speaker's missing UDP_DIAG capability explicitly. Unconnected UDP
 destinations remain unattributed; this audit never authorizes a flow policy.
+The [conntrack-label experiment](CONNTRACK_LABELS.md) passed TCP/UDP own-flow
+tests including replies after socket closure and working unrelated controls.
+Marking before actual role startup, durable composition and boot remain pending.
