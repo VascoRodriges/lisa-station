@@ -7,6 +7,8 @@
 #define LISA_PLATFORM_STORAGE_H
 #include "collector_guard.h"
 #include "platform_seed.h"
+#include <sys/vfs.h>
+#include <linux/magic.h>
 
 static inline int platform_storage_bind_file(const char *root,const char *source,const char *destination,int executable){
     struct stat before,after;char target[PATH_MAX],pinned[64];
@@ -27,9 +29,27 @@ static inline int platform_storage_tmpfs(const char *root,const char *path,const
     return snprintf(target,sizeof(target),"%s%s",root,path)>=(int)sizeof(target)||
         mount("tmpfs",target,"tmpfs",MS_NOSUID|MS_NODEV|MS_NOEXEC,options)?-1:0;
 }
-static inline int platform_storage_enter(const char *root,const char *seeds,const char *profile,const char *executable){
+/* Boot metadata is an explicit SDK compatibility dependency. It contains
+ * fixed kernel boot parameters, not proc/PID access or an application queue. */
+static inline int platform_storage_boot_metadata(const char *root){
+    int fd=open("/proc/cmdline",O_RDONLY|O_NOFOLLOW|O_CLOEXEC);struct stat before,after;struct statfs source;
+    if(fd<0)return -1;
+    char target[PATH_MAX],pinned[64];
+    int valid=!fstat(fd,&before)&&!fstatfs(fd,&source)&&source.f_type==PROC_SUPER_MAGIC&&S_ISREG(before.st_mode)&&before.st_uid==0&&before.st_nlink==1&&!(before.st_mode&0222);
+    snprintf(pinned,sizeof(pinned),"/proc/self/fd/%d",fd);
+    if(snprintf(target,sizeof(target),"%s/proc/cmdline",root)>=(int)sizeof(target))valid=0;
+    int marker=-1;if(valid)marker=open(target,O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);
+    int failed=!valid||marker<0;
+    if(marker>=0&&close(marker))failed=1;
+    if(!failed&&(mount(pinned,target,NULL,MS_BIND,NULL)||
+        mount(NULL,target,NULL,MS_BIND|MS_REMOUNT|MS_RDONLY|MS_NOSUID|MS_NODEV|MS_NOEXEC,NULL)||
+        fstat(fd,&after)||!platform_seed_same(&before,&after)))failed=1;
+    if(close(fd))failed=1;
+    return failed?-1:0;
+}
+static inline int platform_storage_enter_mode(const char *root,const char *seeds,const char *profile,const char *executable,int boot_metadata){
     struct stat info;int source=-1,destination=-1,failed=1;char target[PATH_MAX];
-    if(lstat(root,&info)||!S_ISDIR(info.st_mode)||info.st_uid||(info.st_mode&07777)!=0700)return -1;
+    if((boot_metadata!=0&&boot_metadata!=1)||lstat(root,&info)||!S_ISDIR(info.st_mode)||info.st_uid||(info.st_mode&07777)!=0700)return -1;
     source=open(seeds,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
     if(source<0||!platform_seed_directory(source,0))goto done;
     /* Validate every source before any namespace mutation. */
@@ -61,13 +81,17 @@ static inline int platform_storage_enter(const char *root,const char *seeds,cons
     for(unsigned i=0;i<PLATFORM_SEED_COUNT;++i)if(platform_seed_copy(source,destination,0,i))goto done;
     if(close(source)){source=-1;goto done;}source=-1;
     if(close(destination)){destination=-1;goto done;}destination=-1;
-    if(diagnostics_directory(root,"/data/quasar/data")||diagnostics_directory(root,"/data/quasar/daemons_logs")||
+    if((boot_metadata&&platform_storage_boot_metadata(root))||
+        diagnostics_directory(root,"/data/quasar/data")||diagnostics_directory(root,"/data/quasar/daemons_logs")||
         mount(NULL,root,NULL,MS_REMOUNT|MS_RDONLY|MS_NOSUID|MS_NODEV,NULL)||chroot(root)||chdir("/"))goto done;
     failed=0;
 done:
     if(source>=0)close(source);
     if(destination>=0)close(destination);
     return failed?-1:0;
+}
+static inline int platform_storage_enter(const char *root,const char *seeds,const char *profile,const char *executable){
+    return platform_storage_enter_mode(root,seeds,profile,executable,0);
 }
 /* Storage-only probe policy. Named/abstract UNIX sockets and host-directed
  * signals/keyrings are not justified by this narrow boundary. Socketpairs are

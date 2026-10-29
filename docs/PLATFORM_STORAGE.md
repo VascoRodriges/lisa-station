@@ -30,7 +30,9 @@ and seccomp restrictions retained across exec. The storage-only policy blocks
 named/abstract UNIX socket creation, UNIX socketpairs, host signalling and
 keyring calls. Bounded anonymous pipes provide the probe control/report channel;
 ordinary IP socket creation remains possible. These restrictions
-are local to this child. Reviewed SDK IPC/hardware compatibility is still needed
+are local to this child. The separate [SDK diagnostic](PLATFORM_SDK_DIAGNOSTIC.md) can additionally
+admit only pinned read-only boot cmdline metadata; this default storage view still
+hides it in both qualified epochs. Reviewed SDK IPC/hardware compatibility is still needed
 before replacing actual platform workers.
 
 ## Evidence
@@ -48,7 +50,7 @@ copies and absence of leaked host file/directory descriptors. Root IPv4/IPv6
 loopback controls worked throughout. Releasing the final directory references
 completed the synthetic lifecycle.
 
-The trial passed **186 storage checks**. **50 seed checks** passed on the speaker
+The trial passed **188 storage checks**. **50 seed checks** passed on the speaker
 and a fortified Linux host, including unsafe permissions, hard links, symlinks,
 FIFOs/directories, oversized/empty identity inputs, nonempty markers, restrictive
 caller umask and deterministic replacement of a pinned input during copying.
@@ -59,12 +61,12 @@ loss; the shared trial lock is released only for its matching ownership token.
 Stock process identities, boot/configuration and firewall rules were unchanged.
 No audio, real identity data or proprietary process was involved.
 
-Ruff, the public-source check and **1131 Python/HA tests** passed. The build matrix
-now has **37 native targets**, including the storage probe and its host seed checks.
+Ruff, the public-source check and **1237 Python/HA tests** passed. The build matrix
+now has **39 native targets**, including the storage probe and its host seed checks.
 
 Qualified ARM SHA256:
 
-`bac2d1bc8e5a979cfd0c4d7ef447f91bdc56a8cd160cca3929842a2eab08e31a`
+`a35c771ca26d68cc217502a1015ce2d4f97dc9c63d662579890ba06b02f42c9a`
 
 ```sh
 python controller/build.py --target platform-storage-probe

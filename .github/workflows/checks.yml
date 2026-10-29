@@ -57,6 +57,7 @@ jobs:
       - run: python controller/build.py --target epoch-mutation-probe
       - run: python controller/build.py --target platform-storage-probe
       - run: python controller/build.py --target platform-worker-probe
+      - run: python controller/build.py --target platform-sdk-probe
       - run: python controller/build.py --target station-init
       - run: python controller/build.py --target boot-runner-probe
       - run: python controller/build.py --target boot-dispatch-probe
@@ -272,3 +273,7 @@ jobs:
         with:
           name: station-platform-worker-qualification-armhf
           path: build/platform-worker-probe.armhf
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: station-platform-sdk-diagnostic-armhf
+          path: build/platform-sdk-probe.armhf

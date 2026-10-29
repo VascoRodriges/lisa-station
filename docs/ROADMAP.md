@@ -181,3 +181,11 @@ The [platform worker guard](PLATFORM_WORKERS.md) now qualifies per-worker thread
 creation and self-signalling across exec, including parent loss after the leader
 exits. This own-ELF boundary is not yet the permanent manager or actual SDK
 composition; private IPC compatibility and production installation remain pending.
+
+The [audio-free SDK diagnostic](PLATFORM_SDK_DIAGNOSTIC.md) now composes the private
+storage and worker guards with complete per-child socket denial. Actual SDK modes
+load configuration and create threads after admission of one pinned read-only boot
+metadata file. Platform stops at the denied D-Bus dependency; media cannot create
+its time provider. Both are drained, with no real identity/audio or production
+changes. Narrow IPC/time adapters, actual SDK queues and permanent installation
+remain required; these diagnostic failures are not functional acceptance.
