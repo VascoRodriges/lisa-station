@@ -53,6 +53,7 @@ jobs:
       - run: python controller/build.py --target udp-evidence-probe
       - run: python controller/build.py --target connmark-probe
       - run: python controller/build.py --target label-policy-probe
+      - run: python controller/build.py --target epoch-policy-probe
       - run: python controller/build.py --target station-init
       - run: python controller/build.py --target boot-runner-probe
       - run: python controller/build.py --target boot-dispatch-probe
@@ -92,6 +93,8 @@ jobs:
           cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/connmark_probe.c -o build/connmark-host
           cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/label_policy_probe.c -o build/label-policy-host
           ./build/label-policy-host
+          cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/epoch_policy_probe.c -o build/epoch-policy-host
+          ./build/epoch-policy-host --selftest
           cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/boot_runner_probe.c -o build/boot-runner-host
           chmod 700 build/boot-runner-host
           ./build/boot-runner-host
@@ -244,3 +247,7 @@ jobs:
         with:
           name: station-open-transition-qualification-armhf
           path: build/open-transition-probe.armhf
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: station-epoch-policy-qualification-armhf
+          path: build/epoch-policy-probe.armhf

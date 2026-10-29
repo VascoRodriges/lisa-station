@@ -124,3 +124,8 @@ The [explicit Alice-return engine](ALICE_RETURN.md) now preserves a durable
 opening fence across every interrupted preparation/commit and fsync failure.
 It does not open vendor traffic yet: policy epoch rotation, coordinator callbacks,
 private platform state and production installation remain required.
+
+The [generation policy](EPOCH_POLICY.md) now permits new TCP/UDP flows while
+retired labelled sockets stay denied on IPv4/IPv6/mapped paths. Its real-kernel
+trial preserves unrelated connections. Durable ownership, mutation recovery and
+the real mode/role callback composition remain the next implementation work.

@@ -35,7 +35,8 @@ request with a new revision/boot to replace the earlier, valid opening journal.
 Malformed journals are preserved for recovery rather than treated as absent.
 
 This engine deliberately does not supply a permissive network callback. The
-real adapter must release **new** guarded traffic while retaining denial for
+[epoch policy primitive](EPOCH_POLICY.md) now has own-loopback kernel evidence;
+the real adapter must release **new** guarded traffic while retaining denial for
 previously closed labelled flows. Simply deleting the existing connmark DROP
 rules would reopen those old flows and is not a valid implementation. Policy
 epoch handling, platform private filesystem, fixed service composition and
