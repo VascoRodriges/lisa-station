@@ -176,3 +176,8 @@ DATA/TMP/shared-memory epochs without exposing the host vendor DATA tree. Two
 own-ELF epochs and pinned seed/race checks pass. Actual SDK, IPC/hardware and
 identity lifecycle integration remain required; production switching is still
 uninstalled.
+
+The [platform worker guard](PLATFORM_WORKERS.md) now qualifies per-worker thread-only
+creation and self-signalling across exec, including parent loss after the leader
+exits. This own-ELF boundary is not yet the permanent manager or actual SDK
+composition; private IPC compatibility and production installation remain pending.
