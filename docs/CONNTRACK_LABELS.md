@@ -62,9 +62,10 @@ label-deny hooks at the beginning of filter OUTPUT, in both families. Names are
 derived from the existing validated owned chain. Unexpected exceptions, missing
 roles, wrong masks or changed ordering cannot satisfy the canonical comparison.
 It invokes only fixed xtables programs with bounded captured output; it never
-installs or flushes a rule. Its pure rule fixtures passed **29 checks on the
-speaker and fortified host**. This verifier is not yet wired into role admission
-or the durable close callbacks and has not yet qualified a live combined policy.
+installs or flushes a rule. The extended rule/admission fixtures passed **60
+checks on the speaker and fortified host**. The [labelled startup trial](LABELLED_STARTUP.md)
+now connects this verifier to per-revision admission and the shared close
+callbacks for all four actual roles. Permanent deployment remains pending.
 
 Install and verify marking **before** releasing any guarded sender. Compose
 label rules and their ordering with the four-role barrier, durable close fence

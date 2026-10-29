@@ -18,12 +18,14 @@
 #include "closed_transition.h"
 #include "policy_check.h"
 #include "composite_roles.h"
+#include "label_admission.h"
 
 #define VENDOR_GID 57342
 #define DIAGNOSTICS_GID 57343
 #define COLLECTOR_GID 57344
 #define TELEMETRY_GID 57345
 static int lab;
+static int use_labels;
 static unsigned selected_gid=VENDOR_GID;
 static char diagnostics_root[PATH_MAX];
 static char collector_root[PATH_MAX],collector_profile[PATH_MAX];
@@ -50,6 +52,18 @@ static int secure_directory(const char *path) {
     }
     if (!store_directory_valid(parent,0)) { close(parent); return -1; }
     return parent;
+}
+static int labelled_preflight(void) {
+    if(!use_labels) return 1;
+    int state=secure_directory(platform_state),runtime=secure_directory(platform_runtime),ok=0;
+    struct gate_lease lease={-1,0}; char chain[32];
+    if(state>=0&&runtime>=0&&gate_acquire(state,runtime,0,platform_boot,&lease)==GATE_GRANTED&&
+        !policy_chain_read(runtime,0,chain,sizeof(chain))&&!label_arm_read(runtime,0,lease.revision,platform_boot,chain)&&
+        label_policy_marking_verified(chain)) ok=1;
+    gate_release(&lease);
+    if(state>=0) close(state);
+    if(runtime>=0) close(runtime);
+    return ok;
 }
 
 static int role_status(pid_t pid,int strict) {
@@ -152,7 +166,7 @@ static int legacy_epoch_clear(const char *flag) {
 }
 static int prepare_epoch(int telemetry) {
     struct rlimit core={0,0},files={1024,1024};
-    if(!legacy_epoch_clear(telemetry?"--telemetry":"--fluent-bitd")||clearenv()||setrlimit(RLIMIT_CORE,&core)||setrlimit(RLIMIT_NOFILE,&files)||
+    if(!labelled_preflight()||!legacy_epoch_clear(telemetry?"--telemetry":"--fluent-bitd")||clearenv()||setrlimit(RLIMIT_CORE,&core)||setrlimit(RLIMIT_NOFILE,&files)||
         setenv("LD_LIBRARY_PATH","/system/vendor/quasar/libs",1)||
         setenv("CA_CERTIFICATES","/system/vendor/quasar/ca-certificates.crt",1)||
         setenv("PATH","/usr/sbin:/usr/bin:/sbin:/bin",1)||
@@ -253,7 +267,7 @@ static int platform_workers(pid_t launcher,uint64_t ticks) {
 }
 static int prepare_launcher(int split) {
     struct rlimit files={10240,10240},stack={1024*1024,1024*1024};
-    if (!(split?legacy_platform_clear():legacy_clear()) || clearenv() || chdir("/data/quasar") ||
+    if (!labelled_preflight() || !(split?legacy_platform_clear():legacy_clear()) || clearenv() || chdir("/data/quasar") ||
         setrlimit(RLIMIT_NOFILE,&files) || setrlimit(RLIMIT_STACK,&stack) ||
         setenv("CA_CERTIFICATES","/system/vendor/quasar/ca-certificates.crt",1) ||
         setenv("LD_LIBRARY_PATH","/system/vendor/quasar/libs",1) ||
@@ -285,7 +299,7 @@ static int legacy_diagnostics_clear(void) {
 }
 static int prepare_diagnostics(void) {
     struct rlimit core={0,0},files={256,256};
-    if(!legacy_diagnostics_clear() || clearenv() || chdir("/") || setrlimit(RLIMIT_CORE,&core) ||
+    if(!labelled_preflight() || !legacy_diagnostics_clear() || clearenv() || chdir("/") || setrlimit(RLIMIT_CORE,&core) ||
         setrlimit(RLIMIT_NOFILE,&files) || setenv("PATH","/usr/sbin:/usr/bin:/sbin:/bin",1) ||
         setenv("DBUS_SYSTEM_BUS_ADDRESS","unix:path=/var/run/dbus/system_bus_socket",1) ||
         diagnostics_isolate(diagnostics_root,"/usr/bin/alsa-audio-monitord") ||
@@ -294,7 +308,8 @@ static int prepare_diagnostics(void) {
 }
 
 struct close_quasar_context {
-    int state,runtime,policy_valid;
+    int state,runtime,policy_valid,labelled;
+    uint64_t label_revision;
     const char *boot;
     const struct guardian_spec *spec;
     char chain[32];
@@ -318,7 +333,10 @@ static int verify_quasar_closed(void *pointer) {
 }
 static int deny_roles(void *pointer) {
     struct close_quasar_context *context=pointer;
-    return context->policy_valid&&policy_groups_denied(context->chain,composite_groups,COMPOSITE_ROLE_COUNT)?0:-1;
+    if(!context->policy_valid) return -1;
+    if(context->labelled) return !label_arm_read(context->runtime,0,context->label_revision,context->boot,context->chain)&&
+        label_policy_verified(context->chain)?0:-1;
+    return policy_groups_denied(context->chain,composite_groups,COMPOSITE_ROLE_COUNT)?0:-1;
 }
 static int absent_role(void *pointer,unsigned role) {
     (void)pointer; if(role>=COMPOSITE_ROLE_COUNT) return -1;
@@ -336,6 +354,26 @@ static int stop_role(void *pointer,unsigned role) {
         struct timespec delay={0,50000000}; nanosleep(&delay,NULL);
     }
     return -1;
+}
+static enum guardian_result arm_labels(int state,int runtime,const char *boot,struct guardian_started *started) {
+    int lock=guardian_role_lock(state,0,"mode.lock");
+    if(lock<0) return GUARD_BUSY;
+    enum guardian_result result=GUARD_DENIED;
+    struct mode_record current; char chain[32];
+    if(mode_store_close_pending(state,0)||mode_store_read(state,0,&current)!=STORE_OK||current.requested!=LISA_MODE_ALICE||
+        !gate_permit_valid(runtime,0,current.revision,boot)||policy_chain_read(runtime,0,chain,sizeof(chain))||
+        !label_policy_marking_verified(chain)) goto done;
+    if(!legacy_clear()||(!lab&&!legacy_diagnostics_clear())) { result=GUARD_BUSY; goto done; }
+    for(unsigned i=0;i<COMPOSITE_ROLE_COUNT;++i) {
+        struct guardian_record record; char name[32]; snprintf(name,sizeof(name),"%s.child",composite_names[i]);
+        if(absent_role(NULL,i)||guardian_read(runtime,0,name,&record)!=1) { result=GUARD_BUSY; goto done; }
+    }
+    if(!mode_store_close_pending(state,0)&&gate_permit_valid(runtime,0,current.revision,boot)&&
+        !label_arm_publish(runtime,0,current.revision,boot,chain)) {
+        result=GUARD_OK; started->record.revision=current.revision;
+    }
+done:
+    close(lock); return result;
 }
 static int maind_pids(void) {
     DIR *directory=opendir("/proc"); struct dirent *entry;
@@ -361,6 +399,14 @@ int main(int argc,char **argv) {
     lab=!strncmp(operation,"--lab-",6);
     if ((lab&&argc!=3) || (!lab&&argc!=2)) return 2;
     const char *action=operation+(lab?6:2);
+    const char *reported_action=action;
+    use_labels=!strncmp(action,"labelled-",9);
+    if(use_labels) action+=9;
+    int arming=!strcmp(action,"arm-labels");
+    if(arming&&(!lab||use_labels)) return 2;
+    if(use_labels&&strcmp(action,"start-platform")&&strcmp(action,"start-collector")&&strcmp(action,"start-telemetry")&&
+        strcmp(action,"start-diagnostics")&&strcmp(action,"inspect-platform")&&strcmp(action,"inspect-collector")&&
+        strcmp(action,"inspect-telemetry")&&strcmp(action,"inspect-diagnostics")&&strcmp(action,"close-roles")&&strcmp(action,"check-roles-policy")) return 2;
     int inventory=!strcmp(action,"maind-pids");
     if(inventory&&lab) return 2;
     int platform=!strcmp(action,"start-platform")||!strcmp(action,"inspect-platform");
@@ -374,7 +420,7 @@ int main(int argc,char **argv) {
     int telemetry=!strcmp(action,"start-telemetry")||!strcmp(action,"stop-telemetry")||
         !strcmp(action,"reconcile-telemetry")||!strcmp(action,"close-telemetry")||
         !strcmp(action,"check-telemetry-policy")||!strcmp(action,"inspect-telemetry")||!strcmp(action,"observe-telemetry-close");
-    if (!inventory && strcmp(action,"start-quasar") && strcmp(action,"start-platform") && strcmp(action,"inspect-platform") && strcmp(action,"stop-quasar") && strcmp(action,"reconcile-quasar") &&
+    if (!arming && !inventory && strcmp(action,"start-quasar") && strcmp(action,"start-platform") && strcmp(action,"inspect-platform") && strcmp(action,"stop-quasar") && strcmp(action,"reconcile-quasar") &&
         strcmp(action,"start-diagnostics") && strcmp(action,"stop-diagnostics") && strcmp(action,"reconcile-diagnostics") && strcmp(action,"inspect-diagnostics") &&
         strcmp(action,"start-collector") && strcmp(action,"stop-collector") && strcmp(action,"reconcile-collector") && strcmp(action,"inspect-collector") &&
         strcmp(action,"start-telemetry") && strcmp(action,"stop-telemetry") && strcmp(action,"reconcile-telemetry") && strcmp(action,"inspect-telemetry") &&
@@ -429,6 +475,7 @@ int main(int argc,char **argv) {
     int diagnostics_live=0,diagnostics_identity=0,diagnostics_view=0,diagnostics_bus=0;
     int batch_materialized=0;
     int control4=0,control6=0;
+    int label_admission_verified=0,label_policy_closed=0;
     char *const args[]={"quasar_launcher2","/system/vendor/quasar/launch.json",NULL};
     char *const platform_args[]={"quasar_launcher2",platform_launch,NULL};
     char *const diagnostics_args[]={"alsa-audio-monitord","/etc/alsa-audio-diagnostics/devices/yandexmidi.json",
@@ -461,14 +508,19 @@ int main(int argc,char **argv) {
             int exit_code=allowed?telemetry_observe_close(record.child,record.child_ticks):4;
             close(state); close(runtime); return exit_code;
         }
-        if(!strcmp(action,"start-quasar")||!strcmp(action,"start-platform")||!strcmp(action,"start-diagnostics")||!strcmp(action,"start-collector")||!strcmp(action,"start-telemetry")) {
+        if(arming) {
+            result=arm_labels(state,runtime,boot,&started); label_admission_verified=result==GUARD_OK;
+        }
+        else if(!strcmp(action,"start-quasar")||!strcmp(action,"start-platform")||!strcmp(action,"start-diagnostics")||!strcmp(action,"start-collector")||!strcmp(action,"start-telemetry")) {
             int jail=telemetry?secure_directory(telemetry_root):collector?secure_directory(collector_root):diagnostics?secure_directory(diagnostics_root):-1;
             if(mode_store_close_pending(state,0)) result=GUARD_DENIED;
+            else if((!use_labels&&label_arm_present(runtime)!=0)||(use_labels&&!labelled_preflight())) result=GUARD_DENIED;
             else if((platform&&!collector_profile_valid(platform_launch))||((diagnostics||collector||telemetry)&&jail<0)||(collector&&!collector_profile_valid(collector_profile))||
                 (telemetry&&!collector_profile_valid(telemetry_profile))) result=GUARD_DENIED;
             else if(!(platform?legacy_platform_clear():telemetry?legacy_epoch_clear("--telemetry"):collector?legacy_epoch_clear("--fluent-bitd"):
                 diagnostics?legacy_diagnostics_clear():legacy_clear())||!actors_absent(NULL)) result=GUARD_BUSY;
             else result=guardian_start(state,runtime,0,boot,&spec,&started);
+            label_admission_verified=use_labels&&result==GUARD_OK;
             if(jail>=0) close(jail);
         } else if(!strcmp(action,"stop-quasar")||!strcmp(action,"stop-diagnostics")||!strcmp(action,"stop-collector")||!strcmp(action,"stop-telemetry")) result=guardian_stop(runtime,0,boot,&spec);
         else if(!strcmp(action,"reconcile-quasar")||!strcmp(action,"reconcile-diagnostics")||!strcmp(action,"reconcile-collector")||!strcmp(action,"reconcile-telemetry")) result=guardian_reconcile_closed(state,runtime,0,boot,&spec);
@@ -485,10 +537,12 @@ int main(int argc,char **argv) {
                         collector?collector_runtime_private(record.child):diagnostics_unix_connected(record.child);
                 }
                 if(diagnostics_live&&diagnostics_identity&&diagnostics_view&&diagnostics_bus&&
+                    (!use_labels||labelled_preflight())&&
                     gate_acquire_running(state,runtime,0,boot,&lease)==GATE_GRANTED&&lease.revision==record.revision&&
                     process_live(record.child,record.child_ticks)) result=GUARD_OK;
             }
             gate_release(&lease);
+            label_admission_verified=use_labels&&result==GUARD_OK;
         }
         else if(!strcmp(action,"close-quasar") || !strcmp(action,"check-quasar-policy") ||
             !strcmp(action,"close-diagnostics") || !strcmp(action,"check-diagnostics-policy") ||
@@ -497,6 +551,11 @@ int main(int argc,char **argv) {
             struct mode_record current; struct close_record pending;
             struct close_quasar_context context={.state=state,.runtime=runtime,.boot=boot,.spec=&spec};
             context.policy_valid=!policy_chain_read(runtime,0,context.chain,sizeof(context.chain));
+            context.labelled=composite&&(use_labels||label_arm_present(runtime)!=0);
+            if(mode_store_read(state,0,&current)==STORE_OK) {
+                context.label_revision=current.revision;
+                if(!close_read(state,0,&pending)) context.label_revision=pending.base_revision;
+            }
             if(!strcmp(action,"check-quasar-policy")||!strcmp(action,"check-diagnostics-policy")||!strcmp(action,"check-collector-policy")||!strcmp(action,"check-telemetry-policy")||!strcmp(action,"check-roles-policy")) {
                 result=(composite?deny_roles(&context):deny_quasar(&context))?GUARD_FAILED:GUARD_OK;
                 if(result==GUARD_OK) {
@@ -514,6 +573,7 @@ int main(int argc,char **argv) {
                 result=closed==CLOSE_OK?GUARD_OK:closed==CLOSE_BUSY?GUARD_BUSY:GUARD_FAILED;
                 if(result==GUARD_OK) started.record.revision=base+1;
             }
+            label_policy_closed=context.labelled&&!deny_roles(&context);
         }
         else {
             struct mode_record current,next;
@@ -531,13 +591,13 @@ int main(int argc,char **argv) {
         "\"child_pid\":%ld,\"revision\":%" PRIu64 ",\"transition_phase\":\"%s\",\"diagnostics_jail_verified\":%s,"
         "\"collector_jail_verified\":%s,\"telemetry_jail_verified\":%s,\"telemetry_batch_materialized\":%s,\"telemetry_batch_paths\":%u,\"closed_scope\":\"%s\","
         "\"inspection_live\":%s,\"inspection_identity\":%s,\"inspection_view\":%s,\"inspection_resources\":%s,"
-        "\"platform_workers_verified\":%s,\"isolation_verified\":false}\n",action,names[result],
+        "\"platform_workers_verified\":%s,\"label_admission_verified\":%s,\"label_policy_verified\":%s,\"isolation_verified\":false}\n",reported_action,names[result],
         (long)started.record.guardian,(long)started.record.child,started.record.revision,phase,
         diagnostics&&result==GUARD_OK&&(!strcmp(action,"start-diagnostics")||!strcmp(action,"inspect-diagnostics"))?"true":"false",
         collector&&result==GUARD_OK&&(!strcmp(action,"start-collector")||!strcmp(action,"inspect-collector"))?"true":"false",
         telemetry&&result==GUARD_OK&&(!strcmp(action,"start-telemetry")||!strcmp(action,"inspect-telemetry"))?"true":"false",batch_materialized?"true":"false",(unsigned)batch_materialized,composite?"guarded_roles":"single_role",
         diagnostics_live?"true":"false",diagnostics_identity?"true":"false",!platform&&diagnostics_view?"true":"false",diagnostics_bus?"true":"false",
-        platform&&result==GUARD_OK&&!strcmp(action,"inspect-platform")?"true":"false");
+        platform&&result==GUARD_OK&&!strcmp(action,"inspect-platform")?"true":"false",label_admission_verified?"true":"false",label_policy_closed?"true":"false");
     if((!strcmp(action,"check-quasar-policy")||!strcmp(action,"check-diagnostics-policy")||!strcmp(action,"check-collector-policy")||!strcmp(action,"check-telemetry-policy")||!strcmp(action,"check-roles-policy")) && result==GUARD_OK)
         printf("{\"event\":\"policy-controls\",\"ipv4\":%s,\"ipv6\":%s}\n",control4?"true":"false",control6?"true":"false");
     if(state>=0) close(state);

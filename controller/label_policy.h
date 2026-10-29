@@ -47,9 +47,23 @@ static inline int label_policy_hook(const struct label_policy_names *names,const
     else snprintf(expected,sizeof(expected),"-A INPUT -j %s\n",names->deny);
     return !strncmp(first+1,expected,strlen(expected));
 }
+static inline int label_policy_marking_verified(const char *group) {
+    struct label_policy_names names;
+    if(label_policy_names(group,&names)) return 0;
+    const char *programs[]={"/usr/sbin/iptables","/usr/sbin/ip6tables"};
+    for(unsigned i=0;i<2;++i) {
+        char *name=i?"ip6tables":"iptables"; char rules[8192],expected[2048];
+        char *const mark[]={name,"-t","mangle","-S",names.mark,NULL};
+        char *const hook[]={name,"-t","mangle","-S","OUTPUT",NULL};
+        if(label_policy_expected(&names,1,expected,sizeof(expected))<0||policy_capture(programs[i],mark,rules,sizeof(rules))||strcmp(rules,expected)||
+            policy_capture(programs[i],hook,rules,sizeof(rules))||!label_policy_hook(&names,rules,"OUTPUT",1,1)) return 0;
+    }
+    return 1;
+}
 static inline int label_policy_verified(const char *group) {
     struct label_policy_names names;
-    if(label_policy_names(group,&names)||!policy_groups_denied(group,composite_groups,COMPOSITE_ROLE_COUNT)) return 0;
+    if(label_policy_names(group,&names)||!label_policy_marking_verified(group)||
+        !policy_groups_denied(group,composite_groups,COMPOSITE_ROLE_COUNT)) return 0;
     const char *programs[]={"/usr/sbin/iptables","/usr/sbin/ip6tables"};
     for(unsigned i=0;i<2;++i) {
         char *name=i?"ip6tables":"iptables"; char rules[8192],expected[2048];

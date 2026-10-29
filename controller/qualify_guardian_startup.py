@@ -201,7 +201,14 @@ def evaluate_events(events, closed_policy=False):
     )
 
 
-def run_trial(args, script_factory=trial_script, event_evaluator=evaluate_events, *, profile_factories=None):
+def run_trial(
+    args,
+    script_factory=trial_script,
+    event_evaluator=evaluate_events,
+    *,
+    profile_factories=None,
+    report_name=None,
+):
     if args.host.startswith("-"):
         raise ValueError("host must be an SSH alias")
     root = Path(__file__).resolve().parents[1]
@@ -315,6 +322,10 @@ def run_trial(args, script_factory=trial_script, event_evaluator=evaluate_events
             else "guardian-startup-qualification.json"
         )
     )
+    if report_name is not None:
+        if report_name != "labelled-split-qualification.json":
+            raise ValueError("unsupported private trial report")
+        filename = report_name
     (root / "build" / filename).write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps({key: value for key, value in report.items() if key != "events"}, indent=2))
     if not (

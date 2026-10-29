@@ -7,7 +7,7 @@ This roadmap distinguishes shipped code from acceptance targets.
 | Phase | Deliverable | Acceptance | Status |
 |---|---|---|---|
 | 1 | Status controller, pinned transport, UI setup and diagnostic entities | Real device status; incompatible data rejected; offline state safe; no false privacy claim | v0.1.0 |
-| 2 | Speaker-local vendor isolation | Cover senders outside the main launcher, descendants, old sockets, local relays, DNS, IPv4/IPv6 and telemetry queues; other applications retain internet | Actual four-role startup/close trial passed; collector and telemetry filesystem boundaries implemented; platform shared state, receiver/IPC, UDP, old flows and boot composition pending; real SDK batch remains unmaterialized |
+| 2 | Speaker-local vendor isolation | Cover senders outside the main launcher, descendants, old sockets, local relays, DNS, IPv4/IPv6 and telemetry queues; other applications retain internet | Actual four-role startup/close composed with pre-start conntrack label admission; collector/telemetry boundaries implemented; platform shared state, receiver/IPC, old unmanaged flows, packet queues and boot composition pending; real SDK batch remains unmaterialized |
 | 3 | Persistent mode controller | Alice / Lisa / Paused, serialized transitions, verified actual state, boot enforcement before vendor startup, fail closed, explicit return to Alice | Durable close engine: 65 transaction, 34 admission and 57 guardian checks passed; lock contention no longer causes premature actor shutdown; production callbacks, boot gates and Alice return pending |
 | 4 | Permanent speech service | No workstation dependency; local KWS, standalone VQE, target-speaker extraction on a server, Assist through response playback, physical mute honored | Bounded research prototype exists outside this release |
 | 5 | Assist satellite and voice settings | Pipeline choice, listening/processing/responding states, LED feedback, measured latency and recovery | Planned |
@@ -91,4 +91,6 @@ records the speaker's missing UDP_DIAG capability explicitly. Unconnected UDP
 destinations remain unattributed; this audit never authorizes a flow policy.
 The [conntrack-label experiment](CONNTRACK_LABELS.md) passed TCP/UDP own-flow
 tests including replies after socket closure and working unrelated controls.
-Marking before actual role startup, durable composition and boot remain pending.
+The [labelled startup trial](LABELLED_STARTUP.md) now composes marking admission
+before the four actual guarded roles with their shared durable close. Full
+coordinator ownership, fault qualification and production boot remain pending.
