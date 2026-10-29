@@ -72,3 +72,6 @@ and close behavior. Production boot/mode composition is still pending.
 The [telemetry storage boundary](TELEMETRY_EPOCH.md) adds private LMDB/session/
 batch paths and a post-exit directory observer. Its real-code lifecycle passes,
 but SDK batch materialization is explicitly unobserved and full acceptance fails.
+The [UNIX peer/holder audit](IPC_PEERS.md) adds kernel peer/cookie evidence and
+explicit cross-role, shared-holder and datagram gaps. It is read-only; composite
+IPC enforcement and receiver-data lifecycle remain pending.

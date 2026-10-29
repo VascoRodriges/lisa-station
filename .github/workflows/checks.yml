@@ -46,6 +46,7 @@ jobs:
       - run: python controller/build.py --target relay-evidence-probe
       - run: python controller/build.py --target collector-guard-probe
       - run: python controller/build.py --target telemetry-guard-probe
+      - run: python controller/build.py --target unix-peer-probe
       - name: Exercise mode storage on the host
         run: |
           cc -O2 -Wall -Wextra -Werror controller/mode_store_probe.c -o build/mode-store-host
@@ -63,6 +64,8 @@ jobs:
           ./build/tcp-evidence-host --selftest
           cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/relay_evidence_probe.c -o build/relay-evidence-host
           ./build/relay-evidence-host --selftest
+          cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/unix_peer_probe.c -o build/unix-peer-host
+          ./build/unix-peer-host --selftest
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: station-controller-armhf
@@ -135,3 +138,7 @@ jobs:
         with:
           name: station-telemetry-guard-armhf
           path: build/telemetry-guard-probe.armhf
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: station-unix-peer-armhf
+          path: build/unix-peer-probe.armhf

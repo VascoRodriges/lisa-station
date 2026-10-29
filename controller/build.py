@@ -28,6 +28,7 @@ parser.add_argument(
         "relay-evidence-probe",
         "collector-guard-probe",
         "telemetry-guard-probe",
+        "unix-peer-probe",
     ),
     default="station-ctl",
 )
@@ -52,6 +53,7 @@ sources = {
     "relay-evidence-probe": "relay_evidence_probe.c",
     "collector-guard-probe": "collector_guard_probe.c",
     "telemetry-guard-probe": "telemetry_guard_probe.c",
+    "unix-peer-probe": "unix_peer_probe.c",
 }
 output = root / "build" / (args.target + ".armhf")
 output.parent.mkdir(exist_ok=True)

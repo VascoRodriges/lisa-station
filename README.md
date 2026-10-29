@@ -89,6 +89,9 @@ installation and HA mode controls.
 The [telemetry storage boundary](docs/TELEMETRY_EPOCH.md) also separates LMDB,
 working sessions and batch paths. Its real-code lifecycle is observed, while
 real SDK batch materialization remains an explicit failed acceptance criterion.
+The [UNIX peer/holder audit](docs/IPC_PEERS.md) identifies local relay candidates
+without reading socket names or payloads. Unresolved datagram/shared-holder and
+receiver-data gaps remain explicit; it does not apply a policy.
 
 ## Development
 
