@@ -9,10 +9,13 @@
 struct label_policy_names { char group[32],mark[32],deny[32]; };
 static inline int label_policy_names(const char *group,struct label_policy_names *names) {
     char validation[1024];
+    if(!group||!names) return -1;
+    size_t length=strlen(group);
+    if(length<8||length>27) return -1;
     if(policy_expected_groups(group,composite_groups,COMPOSITE_ROLE_COUNT,validation,sizeof(validation))<0) return -1;
-    strcpy(names->group,group);
-    snprintf(names->mark,sizeof(names->mark),"LISACM_%s",group+7);
-    snprintf(names->deny,sizeof(names->deny),"LISACL_%s",group+7);
+    memcpy(names->group,group,length+1);
+    memcpy(names->mark,group,length+1);memcpy(names->mark,"LISACM_",7);
+    memcpy(names->deny,group,length+1);memcpy(names->deny,"LISACL_",7);
     return 0;
 }
 static inline int label_policy_expected(const struct label_policy_names *names,int marking,char *text,size_t capacity) {

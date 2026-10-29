@@ -129,3 +129,8 @@ The [generation policy](EPOCH_POLICY.md) now permits new TCP/UDP flows while
 retired labelled sockets stay denied on IPv4/IPv6/mapped paths. Its real-kernel
 trial preserves unrelated connections. Durable ownership, mutation recovery and
 the real mode/role callback composition remain the next implementation work.
+
+The [journalled policy adapter](EPOCH_RECOVERY.md) now composes real packet rules
+with the opening/closing intent engines. Its 32 interrupted-opening cases keep
+retired flows denied and require an explicit retry. Autonomous local recovery,
+closed-mode journal rollover and production role/boot composition remain pending.

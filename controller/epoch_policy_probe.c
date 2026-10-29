@@ -6,6 +6,7 @@
 
 static unsigned checks,failures,old_epoch,new_epoch;
 static const char *family_name,*protocol;
+static int recovery_fixture;
 static int check(const char *name,int ok){
     ++checks;failures+=!ok;
     printf("{\"event\":\"epoch-check\",\"family\":\"%s\",\"protocol\":\"%s\",\"old_epoch\":%u,\"new_epoch\":%u,\"check\":\"%s\",\"ok\":%s}\n",
@@ -13,7 +14,8 @@ static int check(const char *name,int ok){
 }
 static int readable(int fd,int milliseconds){struct pollfd ready={fd,POLLIN,0};return poll(&ready,1,milliseconds)==1&&!!(ready.revents&POLLIN);}
 static int quiet(int fd){struct pollfd ready={fd,POLLIN|POLLERR,0};return poll(&ready,1,250)==0;}
-static int command(char expected){char byte;return readable(0,7000)&&read(0,&byte,1)==1&&byte==expected;}
+static int command_byte(char *byte){return readable(0,recovery_fixture?30000:7000)&&read(0,byte,1)==1;}
+static int command(char expected){char byte;return command_byte(&byte)&&byte==expected;}
 static unsigned port(int fd){
     struct sockaddr_storage address;socklen_t size=sizeof(address);
     if(getsockname(fd,(struct sockaddr*)&address,&size))return 0;
@@ -71,7 +73,15 @@ static int run(int family,int type,int mapped){
     if(!command('c'))goto done;
     if(!check("old_closed",blocked(&old,type))||!check("unrelated_closed",transfer(&control,type)))goto done;
     ready("closed",NULL);
-    if(!command('n'))goto done;
+    if(recovery_fixture){
+        char byte;
+        for(;;){
+            if(!command_byte(&byte))goto done;
+            if(byte=='n')break;
+            if(byte!='p'||!check("old_during_recovery",blocked(&old,type))||!check("unrelated_recovery",transfer(&control,type)))goto done;
+            ready("recovery",&old);
+        }
+    }else if(!command('n'))goto done;
     if(!check("new_socket",!pair_create(family,type,mapped,1,&fresh))||!check("new_open_exchange",transfer(&fresh,type))||
         !check("old_still_denied",blocked(&old,type))||!check("unrelated_reopened",transfer(&control,type)))goto done;
     ready("new",&fresh);
@@ -131,11 +141,14 @@ int main(int argc,char **argv){
         alarm(8);int ok=epoch_policy_verified(argv[2],epoch,closed);
         printf("{\"event\":\"epoch-policy\",\"epoch\":%u,\"closed\":%s,\"ok\":%s}\n",epoch,closed?"true":"false",ok?"true":"false");return ok?0:4;
     }
-    if(argc!=6||strcmp(argv[1],"--own-epochs"))return 2;
+    if(argc!=6)return 2;
+    recovery_fixture=!strcmp(argv[1],"--own-recovery-epochs");
+    if(!recovery_fixture&&strcmp(argv[1],"--own-epochs"))return 2;
+    pid_t parent=getppid();if(prctl(PR_SET_PDEATHSIG,SIGKILL)||getppid()!=parent)return 2;
     old_epoch=number(argv[4]);new_epoch=number(argv[5]);if(!old_epoch||!new_epoch||old_epoch==new_epoch)return 2;
     int mapped=!strcmp(argv[2],"mapped"),family=!strcmp(argv[2],"4")?AF_INET:AF_INET6;
     if((family==AF_INET6&&!mapped&&strcmp(argv[2],"6"))||(strcmp(argv[3],"tcp")&&strcmp(argv[3],"udp")))return 2;
-    alarm(30);family_name=mapped?"ipv4-mapped-ipv6":family==AF_INET?"ipv4":"ipv6";protocol=argv[3];
+    alarm(recovery_fixture?90:30);family_name=mapped?"ipv4-mapped-ipv6":family==AF_INET?"ipv4":"ipv6";protocol=argv[3];
     int result=run(family,!strcmp(protocol,"tcp")?SOCK_STREAM:SOCK_DGRAM,mapped);
     printf("{\"event\":\"epoch-summary\",\"family\":\"%s\",\"protocol\":\"%s\",\"old_epoch\":%u,\"new_epoch\":%u,\"checks\":%u,\"failures\":%u,\"audio_opened\":false,\"vendor_processes_changed\":false}\n",
         family_name,protocol,old_epoch,new_epoch,checks,failures);return result||failures;

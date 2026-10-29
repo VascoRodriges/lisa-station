@@ -76,3 +76,7 @@ python -m controller.qualify_epochs YOUR_SPEAKER_SSH_ALIAS \
 Retained labels expire normally after the trial. Immediate repeat runs refuse
 an occupied namespace; deleting live conntrack entries is not a workaround.
 Permanent isolation and real mode-switch acceptance remain unfinished.
+
+The subsequent [composed recovery trial](EPOCH_RECOVERY.md) uses these rules from
+the native journalled adapter and real intent engines, including interrupted
+opening checkpoints. Its recovery remains explicit and lab-scoped.
