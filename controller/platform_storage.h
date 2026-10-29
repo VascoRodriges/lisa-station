@@ -70,8 +70,9 @@ done:
     return failed?-1:0;
 }
 /* Storage-only probe policy. Named/abstract UNIX sockets and host-directed
- * signals/keyrings are not justified by this narrow boundary. Anonymous
- * socketpairs remain available. Real SDK IPC compatibility requires reviewed
+ * signals/keyrings are not justified by this narrow boundary. Socketpairs are
+ * denied too: a datagram pair must not become an abstract-namespace client.
+ * Real SDK IPC compatibility requires reviewed
  * adapters rather than exposing the host bus or abstract namespace wholesale. */
 static inline int platform_storage_guard(void){
     if(collector_extra_guard())return -1;
@@ -81,7 +82,8 @@ static inline int platform_storage_guard(void){
         PLATFORM_DENY(SYS_kill),PLATFORM_DENY(SYS_tkill),PLATFORM_DENY(SYS_tgkill),
         PLATFORM_DENY(SYS_rt_sigqueueinfo),PLATFORM_DENY(SYS_rt_tgsigqueueinfo),
         PLATFORM_DENY(SYS_keyctl),PLATFORM_DENY(SYS_add_key),PLATFORM_DENY(SYS_request_key),
-        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K,SYS_socket,1,0),BPF_STMT(BPF_RET|BPF_K,SECCOMP_RET_ALLOW),
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K,SYS_socket,2,0),
+        BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K,SYS_socketpair,1,0),BPF_STMT(BPF_RET|BPF_K,SECCOMP_RET_ALLOW),
         BPF_STMT(BPF_LD|BPF_W|BPF_ABS,offsetof(struct seccomp_data,args[0])),
         BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K,AF_UNIX,0,1),BPF_STMT(BPF_RET|BPF_K,SECCOMP_RET_ERRNO|EPERM),
         BPF_STMT(BPF_RET|BPF_K,SECCOMP_RET_ALLOW),

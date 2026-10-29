@@ -27,8 +27,9 @@ are closed before entering the view.
 
 After preparation, the child has group 57342, no capabilities, no-new-privileges
 and seccomp restrictions retained across exec. The storage-only policy blocks
-named/abstract UNIX sockets, host signalling and keyring calls; anonymous
-socketpairs and ordinary IP socket creation remain possible. These restrictions
+named/abstract UNIX socket creation, UNIX socketpairs, host signalling and
+keyring calls. Bounded anonymous pipes provide the probe control/report channel;
+ordinary IP socket creation remains possible. These restrictions
 are local to this child. Reviewed SDK IPC/hardware compatibility is still needed
 before replacing actual platform workers.
 
@@ -47,7 +48,7 @@ copies and absence of leaked host file/directory descriptors. Root IPv4/IPv6
 loopback controls worked throughout. Releasing the final directory references
 completed the synthetic lifecycle.
 
-The trial passed **184 storage checks**. **50 seed checks** passed on the speaker
+The trial passed **186 storage checks**. **50 seed checks** passed on the speaker
 and a fortified Linux host, including unsafe permissions, hard links, symlinks,
 FIFOs/directories, oversized/empty identity inputs, nonempty markers, restrictive
 caller umask and deterministic replacement of a pinned input during copying.
@@ -63,7 +64,7 @@ now has **37 native targets**, including the storage probe and its host seed che
 
 Qualified ARM SHA256:
 
-`67f3850dce29ce00b7715ba8dbc65abe38a77a8f149dd3a1d5073921a3c7007c`
+`bac2d1bc8e5a979cfd0c4d7ef447f91bdc56a8cd160cca3929842a2eab08e31a`
 
 ```sh
 python controller/build.py --target platform-storage-probe

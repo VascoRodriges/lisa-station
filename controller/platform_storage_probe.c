@@ -127,7 +127,9 @@ static int actor(int report,int control,const char *canary){
     errno=0;check(syscall(SYS_kill,getpid(),0)<0&&errno==EPERM);
     errno=0;check(syscall(SYS_keyctl,0,0,0,0,0)<0&&errno==EPERM);
     int fd=socket(AF_UNIX,SOCK_STREAM|SOCK_CLOEXEC,0);check(fd<0&&errno==EPERM);if(fd>=0)close(fd);
-    int pair[2];int paired=socketpair(AF_UNIX,SOCK_STREAM|SOCK_CLOEXEC,0,pair);check(!paired);if(!paired){close(pair[0]);close(pair[1]);}
+    const int pair_types[]={SOCK_STREAM,SOCK_DGRAM};
+    for(unsigned i=0;i<2;++i){int pair[2];errno=0;int paired=socketpair(AF_UNIX,pair_types[i]|SOCK_CLOEXEC,0,pair);
+        check(paired<0&&errno==EPERM);if(!paired){close(pair[0]);close(pair[1]);}}
     const int families[]={AF_INET,AF_INET6};for(unsigned i=0;i<2;++i){fd=socket(families[i],SOCK_DGRAM|SOCK_CLOEXEC,0);check(fd>=0);if(fd>=0)close(fd);}
     if(failures){uint64_t bad[]={checks,failures};(void)write(report,bad,sizeof(bad));close(directory);return 4;}
     check(!unlinkat(directory,"account_storage.dat",0)&&!put(directory,"account_storage.dat","private refresh\n"));
