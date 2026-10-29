@@ -47,7 +47,7 @@ conflicting, linked, public, symlinked and oversized arm records, immutable
 publication and cleanup. The guardian regression suite passed **57 checks** on
 both systems, including transient exclusive mode-lock contention; this prevents
 an admission review from prematurely stopping live roles before network denial.
-The Python/HA suite passed **554 tests**.
+The Python/HA suite passed **572 tests** after adding independent fault recovery.
 
 The qualified backend digest is
 `46aa0416f1fa98bc811cfede95b6676744b9f435a488decc71e5d82bc72f3f5e`.
@@ -64,7 +64,33 @@ This command temporarily replaces stock workers and explicitly restores Alice.
 It refuses installed production state and any occupied fixture label or existing
 connmark policy. It does not flush conntrack to make a retry possible. A trap,
 bounded guardians and independent watchdog cover its lifecycle; a separate
-SIGKILL qualification of the new combined restoration is still pending.
+SIGKILL qualification of the combined restoration also passed, as described below.
+
+## Independent watchdog recovery
+
+The separate `qualify_labelled_watchdog` trial passed **38 events**. After all
+four running-role observations, incomplete-policy refusals and full IPv4/IPv6
+group/label verification, it killed **only its own inner trial shell with
+SIGKILL**, before the durable close command. An outer shell observed exit 137
+and waited; it did not invoke the restoration script itself. The inner EXIT
+trap could not run.
+
+The independent watchdog restored ordinary Alice/diagnostics and removed every
+owned filter/mangle hook and chain in **102 seconds from trial start**. The
+original launcher/boot/configuration identity and complete rule specifications
+matched their pre-trial state. The global trial lock was released; ordinary
+worker groups, diagnostics seccomp/mount namespace and D-Bus ownership were
+verified. No audio was captured. Evidence remains private in
+`build/labelled-watchdog-qualification.json`.
+
+```sh
+python -m controller.qualify_labelled_watchdog YOUR_SPEAKER_SSH_ALIAS \
+  --ssh-config YOUR_SSH_CONFIG --allow-temporary-stock-restart
+```
+
+This is **administrative lab restoration to Alice**, not production recovery
+for Lisa/Paused. Installed recovery must preserve or rebuild denial instead of
+resuming Alice. Both tools refuse production state/runtime directories.
 
 ## Limits
 

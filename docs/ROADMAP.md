@@ -93,4 +93,5 @@ The [conntrack-label experiment](CONNTRACK_LABELS.md) passed TCP/UDP own-flow
 tests including replies after socket closure and working unrelated controls.
 The [labelled startup trial](LABELLED_STARTUP.md) now composes marking admission
 before the four actual guarded roles with their shared durable close. Full
-coordinator ownership, fault qualification and production boot remain pending.
+coordinator ownership and production boot remain pending; its separate SIGKILL
+watchdog trial restored stock services and all owned rules successfully.

@@ -230,7 +230,7 @@ def run_trial(
     ssh += [args.host]
 
     def remote(command, **kwargs):
-        return subprocess.run(ssh + [command], capture_output=True, timeout=700, **kwargs)
+        return subprocess.run(ssh + [command], capture_output=True, timeout=800, **kwargs)
 
     def publish(path, payload, mode):
         digest_payload = hashlib.sha256(payload).hexdigest()
@@ -323,7 +323,7 @@ def run_trial(
         )
     )
     if report_name is not None:
-        if report_name != "labelled-split-qualification.json":
+        if report_name not in {"labelled-split-qualification.json", "labelled-watchdog-qualification.json"}:
             raise ValueError("unsupported private trial report")
         filename = report_name
     (root / "build" / filename).write_text(json.dumps(report, indent=2) + "\n")

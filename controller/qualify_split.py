@@ -162,27 +162,7 @@ for name in collector telemetry diagnostics; do [ -z "$(ls -A "$STATE/$name-root
     return script.replace("PROBE", target)
 
 
-def evaluate_events(events, closed_policy=True):
-    if not closed_policy or len(events) != 37 or any(not isinstance(row, dict) for row in events):
-        return False
-    services = [row for row in events if row.get("event") == "station-service"]
-    expected = [
-        ("start-telemetry", "ok"),
-        ("start-collector", "ok"),
-        ("start-platform", "ok"),
-        ("start-platform", "busy"),
-        ("start-diagnostics", "ok"),
-    ]
-    expected += [
-        ("inspect-" + role, "ok")
-        for _ in range(4)
-        for role in ("telemetry", "collector", "platform", "diagnostics")
-    ]
-    expected += [("check-roles-policy", "failed"), ("check-roles-policy", "ok"), ("close-roles", "ok")]
-    expected += [("reconcile-" + role, "ok") for role in ("quasar", "collector", "telemetry", "diagnostics")]
-    expected += [("start-platform", "denied")]
-    if [(row.get("operation"), row.get("result")) for row in services] != expected:
-        return False
+def evaluate_running(services, samples):
     starts = {
         row["operation"][6:]: row
         for row in services
@@ -215,7 +195,6 @@ def evaluate_events(events, closed_policy=True):
             and row.get("closed_scope") != "guarded_roles"
         ):
             return False
-    samples = [row for row in events if row.get("event") == "startup-sample"]
     if len(samples) != 4:
         return False
     stable = None
@@ -253,6 +232,33 @@ def evaluate_events(events, closed_policy=True):
                 if role and worker["pid"] != starts[role]["child_pid"]:
                     return False
     except (KeyError, TypeError, ValueError):
+        return False
+    return True
+
+
+def evaluate_events(events, closed_policy=True):
+    if not closed_policy or len(events) != 37 or any(not isinstance(row, dict) for row in events):
+        return False
+    services = [row for row in events if row.get("event") == "station-service"]
+    expected = [
+        ("start-telemetry", "ok"),
+        ("start-collector", "ok"),
+        ("start-platform", "ok"),
+        ("start-platform", "busy"),
+        ("start-diagnostics", "ok"),
+    ]
+    expected += [
+        ("inspect-" + role, "ok")
+        for _ in range(4)
+        for role in ("telemetry", "collector", "platform", "diagnostics")
+    ]
+    expected += [("check-roles-policy", "failed"), ("check-roles-policy", "ok"), ("close-roles", "ok")]
+    expected += [("reconcile-" + role, "ok") for role in ("quasar", "collector", "telemetry", "diagnostics")]
+    expected += [("start-platform", "denied")]
+    if [(row.get("operation"), row.get("result")) for row in services] != expected:
+        return False
+    samples = [row for row in events if row.get("event") == "startup-sample"]
+    if not evaluate_running(services, samples):
         return False
     closing = next(row for row in services if row["operation"] == "close-roles")
     controls = [row for row in events if row.get("event") == "policy-controls"]
