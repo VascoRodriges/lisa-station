@@ -95,6 +95,9 @@ receiver-data gaps remain explicit; it does not apply a policy.
 The [shared guarded-role close](docs/COMPOSITE_ROLES.md) verifies all four
 group barriers before shared permit revocation and attempts every role's stop.
 Its two-epoch trial passes; it is separate from full migration and boot control.
+The [kernel IPC queue guard](docs/IPC_QUEUES.md) adds inherited per-process
+denial of System V IPC and POSIX message queues, without changing host queues
+or unrelated applications. UNIX/file/mapping relays remain separate requirements.
 
 ## Development
 

@@ -4,8 +4,9 @@ from copy import deepcopy
 
 import pytest
 
-from controller.qualify_roles import evaluate_events, trial_script
+from controller.qualify_roles import evaluate_events, paired_collector_profile, trial_script
 from tests.test_collector_guard import events as collector_events
+from tests.test_collector_guard import stock as collector_stock
 
 
 def events():
@@ -109,3 +110,27 @@ def test_restore_retains_both_original_epochs_and_all_four_groups():
     assert script.index('--lab-close-roles "$CANON"') < script.index('--lab-reconcile-telemetry "$CANON"')
     assert '[ "$(telemetry_processes)" = "$second" ]' in script
     assert "sleep 60;" in script
+
+
+def test_collector_uses_observed_private_telemetry_peer():
+    source = collector_stock()
+    source.update(metricad={"port": 9887}, metrica2d={"port": 9904})
+    before = deepcopy(source)
+    profile = paired_collector_profile(source, lab_clone=True)
+    assert source == before
+    assert (profile["metricad"]["port"], profile["metrica2d"]["port"]) == (57345, 57346)
+    assert paired_collector_profile(source)["metricad"]["port"] == 9887
+    script = trial_script()
+    receiver = script.index('PROBE --lab-start-telemetry "$CANON"\ncode=0')
+    client = script.index('PROBE --lab-start-collector "$CANON"\ncode=0')
+    assert receiver < script.index("while ! PROBE --lab-inspect-telemetry", receiver) < client
+
+
+@pytest.mark.parametrize("fault", ("missing", "changed"))
+def test_unreviewed_peer_port_refused(fault):
+    source = collector_stock()
+    source.update(metricad={"port": 1 if fault == "changed" else 9887}, metrica2d={"port": 9904})
+    if fault == "missing":
+        del source["metricad"]
+    with pytest.raises(ValueError):
+        paired_collector_profile(source, lab_clone=True)

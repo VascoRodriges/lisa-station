@@ -79,3 +79,6 @@ The [shared guarded-role close](COMPOSITE_ROLES.md) now verifies all four group
 barriers before common permit revocation and stops/verifies every role. A
 two-epoch real-code trial passes; full sender migration and relay/flow/boot
 composition remain pending.
+The [kernel IPC queue guard](IPC_QUEUES.md) denies System V and POSIX message
+queue interfaces in new guarded actors. Existing unguarded services and UNIX/
+file/mapping relay paths still require migration and composition.

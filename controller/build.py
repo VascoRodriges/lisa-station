@@ -30,6 +30,7 @@ parser.add_argument(
         "telemetry-guard-probe",
         "unix-peer-probe",
         "composite-roles-probe",
+        "ipc-guard-probe",
     ),
     default="station-ctl",
 )
@@ -56,6 +57,7 @@ sources = {
     "telemetry-guard-probe": "telemetry_guard_probe.c",
     "unix-peer-probe": "unix_peer_probe.c",
     "composite-roles-probe": "composite_roles_probe.c",
+    "ipc-guard-probe": "ipc_guard_probe.c",
 }
 output = root / "build" / (args.target + ".armhf")
 output.parent.mkdir(exist_ok=True)

@@ -5,6 +5,7 @@
  * Callers still must close inherited sockets and audit IPC/file relays.
  */
 #include <linux/capability.h>
+#include "vendor_ipc_guard.h"
 
 static int vendor_identity_check(gid_t group) {
     struct __user_cap_header_struct header = {_LINUX_CAPABILITY_VERSION_3, 0};
@@ -51,6 +52,6 @@ static int vendor_identity_prepare(gid_t group) {
 #undef DENY
     struct sock_fprog program = {sizeof(filter) / sizeof(filter[0]), filter};
     if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) ||
-        prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &program)) return -1;
+        prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &program) || vendor_ipc_guard()) return -1;
     return vendor_identity_check(group);
 }

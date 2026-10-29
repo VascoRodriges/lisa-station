@@ -43,6 +43,10 @@ This is deliberately **not a full migration or whole-device no-Yandex test**.
 The report declares `closed_scope: guarded_roles` and retains
 `isolation_verified: false`. SDK startup can delay readiness; the trial waits
 with a bound and fails/restores if readiness is not established.
+The paired lab profile directs the collector's SDK to the private telemetry
+ports and observes that receiver before starting its client. Its cold SQLite
+initialization has a bounded 25-second wait; private queue/holder conditions
+are unchanged. The original stock receiver remains frozen throughout.
 
 ```sh
 python controller/build.py --target composite-roles-probe

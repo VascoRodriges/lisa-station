@@ -14,6 +14,19 @@ from controller.qualify_collector import evaluate_events as evaluate_collector
 from controller.telemetry_profile import prepare_telemetry_profile
 
 
+def paired_collector_profile(stock, *, lab_clone=False):
+    profile = prepare_collector_profile(stock, lab_clone=lab_clone)
+    if lab_clone:
+        try:
+            for name, original, private in (("metricad", 9887, 57345), ("metrica2d", 9904, 57346)):
+                if profile[name]["port"] != original:
+                    raise ValueError("unreviewed telemetry peer port")
+                profile[name]["port"] = private
+        except (KeyError, TypeError) as error:
+            raise ValueError("missing telemetry peer configuration") from error
+    return profile
+
+
 def trial_script():
     script = SCRIPT
 
@@ -93,6 +106,32 @@ PROBE --lab-start-telemetry "$CANON" > "$STATE/duplicate-telemetry.json" || code
 [ "$code" != 0 ] && grep -q '"result":"busy"' "$STATE/duplicate-telemetry.json"
 cat "$STATE/duplicate-telemetry.json"''',
     )
+    collector_start = '''PROBE --lab-start-collector "$CANON"
+code=0
+PROBE --lab-start-collector "$CANON" > "$STATE/duplicate.json" || code=$?
+[ "$code" != 0 ] && grep -q '"result":"busy"' "$STATE/duplicate.json"
+cat "$STATE/duplicate.json"'''
+    telemetry_start = '''PROBE --lab-start-telemetry "$CANON"
+code=0
+PROBE --lab-start-telemetry "$CANON" > "$STATE/duplicate-telemetry.json" || code=$?
+[ "$code" != 0 ] && grep -q '"result":"busy"' "$STATE/duplicate-telemetry.json"
+cat "$STATE/duplicate-telemetry.json"'''
+    ready_telemetry = """tries=0
+while ! PROBE --lab-inspect-telemetry "$CANON" > "$STATE/telemetry-readiness.json"; do
+    [ "$tries" -lt 15 ] || exit 8; sleep 1; tries=$((tries+1))
+done"""
+    # The collector's SDK must reach this private receiver, not the deliberately
+    # frozen stock port. Start/observe the receiver before starting its client.
+    replace(
+        collector_start + "\n" + telemetry_start,
+        telemetry_start + "\n" + ready_telemetry + "\n" + collector_start,
+    )
+    collector_ready = """while ! PROBE --lab-inspect-collector "$CANON" > "$STATE/readiness.json"; do
+    [ "$tries" -lt 15 ] || exit 8; sleep 1; tries=$((tries+1))"""
+    # File/FD metadata showed the private SQLite queue was not created yet at
+    # the old deadline. Permit cold SDK/input initialization; do not weaken any
+    # readiness condition or reuse a successful observation from another actor.
+    replace(collector_ready, collector_ready.replace('"$tries" -lt 15', '"$tries" -lt 25'))
     replace(
         'for sample in 1 2 3; do sleep 2; PROBE --lab-inspect-collector "$CANON"; done',
         """tries=0
@@ -211,7 +250,7 @@ def main():
         parser.parse_args(),
         "collector",
         trial_script(),
-        prepare_collector_profile,
+        paired_collector_profile,
         evaluate_events,
         additional_profiles={"TELEMETRY": prepare_telemetry_profile},
         report_name="roles",

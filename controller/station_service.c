@@ -436,11 +436,13 @@ int main(int argc,char **argv) {
     const char *phase=state>=0&&!close_read(state,0,&closed_record)?close_phase_name(closed_record.phase):"none";
     printf("{\"event\":\"station-service\",\"operation\":\"%s\",\"result\":\"%s\",\"guardian_pid\":%ld,"
         "\"child_pid\":%ld,\"revision\":%" PRIu64 ",\"transition_phase\":\"%s\",\"diagnostics_jail_verified\":%s,"
-        "\"collector_jail_verified\":%s,\"telemetry_jail_verified\":%s,\"telemetry_batch_materialized\":%s,\"telemetry_batch_paths\":%u,\"closed_scope\":\"%s\",\"isolation_verified\":false}\n",action,names[result],
+        "\"collector_jail_verified\":%s,\"telemetry_jail_verified\":%s,\"telemetry_batch_materialized\":%s,\"telemetry_batch_paths\":%u,\"closed_scope\":\"%s\","
+        "\"inspection_live\":%s,\"inspection_identity\":%s,\"inspection_view\":%s,\"inspection_resources\":%s,\"isolation_verified\":false}\n",action,names[result],
         (long)started.record.guardian,(long)started.record.child,started.record.revision,phase,
         diagnostics&&result==GUARD_OK&&(!strcmp(action,"start-diagnostics")||!strcmp(action,"inspect-diagnostics"))?"true":"false",
         collector&&result==GUARD_OK&&(!strcmp(action,"start-collector")||!strcmp(action,"inspect-collector"))?"true":"false",
-        telemetry&&result==GUARD_OK&&(!strcmp(action,"start-telemetry")||!strcmp(action,"inspect-telemetry"))?"true":"false",batch_materialized?"true":"false",(unsigned)batch_materialized,composite?"guarded_roles":"single_role");
+        telemetry&&result==GUARD_OK&&(!strcmp(action,"start-telemetry")||!strcmp(action,"inspect-telemetry"))?"true":"false",batch_materialized?"true":"false",(unsigned)batch_materialized,composite?"guarded_roles":"single_role",
+        diagnostics_live?"true":"false",diagnostics_identity?"true":"false",diagnostics_view?"true":"false",diagnostics_bus?"true":"false");
     if((!strcmp(action,"check-quasar-policy")||!strcmp(action,"check-diagnostics-policy")||!strcmp(action,"check-collector-policy")||!strcmp(action,"check-telemetry-policy")||!strcmp(action,"check-roles-policy")) && result==GUARD_OK)
         printf("{\"event\":\"policy-controls\",\"ipv4\":%s,\"ipv6\":%s}\n",control4?"true":"false",control6?"true":"false");
     if(state>=0) close(state);
