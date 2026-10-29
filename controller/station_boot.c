@@ -8,6 +8,7 @@
 #include "hardvolume_guard.h"
 #include "hardvolume_mixer.h"
 #include "network_service.h"
+#include "time_service.h"
 
 static int boot_directory(const char *path) {
     char copy[PATH_MAX]; if(!path||path[0]!='/'||strlen(path)>=sizeof(copy)) return -1;
@@ -152,10 +153,14 @@ int main(int argc,char **argv) {
     int dns=!strcmp(argv[1],"--dns-start")||!strcmp(argv[1],"--lab-dns-start")?1:
         !strcmp(argv[1],"--dns-status")||!strcmp(argv[1],"--lab-dns-status")?2:
         !strcmp(argv[1],"--dns-stop")||!strcmp(argv[1],"--lab-dns-stop")?3:0;
+    int clock_service=!strcmp(argv[1],"--time-start")||!strcmp(argv[1],"--lab-time-start")?1:
+        !strcmp(argv[1],"--time-status")||!strcmp(argv[1],"--lab-time-status")?2:
+        !strcmp(argv[1],"--time-stop")||!strcmp(argv[1],"--lab-time-stop")?3:
+        !strcmp(argv[1],"--lab-time-start-proof")?4:0;
     int lab=!strcmp(argv[1],"--lab-policy")||!strcmp(argv[1],"--lab-policy-status")||
-        ((hardware||dns)&&!strncmp(argv[1],"--lab-",6));
-    int status=!strcmp(argv[1],"--status")||!strcmp(argv[1],"--lab-policy-status")||hardware==2||dns==2;
-    if((lab&&argc!=3)||(!lab&&argc!=2)||(!lab&&!status&&!hardware&&!dns&&strcmp(argv[1],"--bootstrap"))) return 2;
+        ((hardware||dns||clock_service)&&!strncmp(argv[1],"--lab-",6));
+    int status=!strcmp(argv[1],"--status")||!strcmp(argv[1],"--lab-policy-status")||hardware==2||dns==2||clock_service==2;
+    if((lab&&argc!=3)||(!lab&&argc!=2)||(!lab&&!status&&!hardware&&!dns&&!clock_service&&strcmp(argv[1],"--bootstrap"))) return 2;
     alarm(10);
     uint64_t began=guardian_milliseconds(); const char *controls="null";
     char compatible[512],boot[37],state_path[PATH_MAX],runtime_path[PATH_MAX];
@@ -168,6 +173,7 @@ int main(int argc,char **argv) {
     int state=-1,runtime=-1,lock=-1,mode_lock=-1,ready=0,ownership=0,observed=0,completed=0; unsigned legacy=0,tagged=0;
     const char *hardware_ok="null";
     const char *dns_ok="null";
+    const char *clock_ok="null";
     const char *result="denied",*requested="unknown"; char chain[32]=""; struct mode_record mode;
     struct statvfs rootfs;
     if(statvfs("/",&rootfs)||!(rootfs.f_flag&ST_RDONLY)) goto done;
@@ -194,12 +200,12 @@ int main(int argc,char **argv) {
     if(mode_lock<0) { result="busy"; goto done; }
     if(mode_store_read(state,0,&mode)!=STORE_OK) goto done;
     requested=mode_name(mode.requested);
-    if((mode.requested==LISA_MODE_ALICE&&!hardware&&!dns)||process_scope(&legacy,&tagged,runtime_path,boot)) goto done;
+    if((mode.requested==LISA_MODE_ALICE&&!hardware&&!dns&&!clock_service)||process_scope(&legacy,&tagged,runtime_path,boot)) goto done;
     observed=1;
-    if(!hardware&&!dns&&(tagged||(!lab&&legacy))) goto done;
+    if(!hardware&&!dns&&!clock_service&&(tagged||(!lab&&legacy))) goto done;
     if(!lab&&!status) { if(mkdir(runtime_path,0700)&&errno!=EEXIST) goto done; }
     runtime=boot_directory(runtime_path);
-    if(runtime<0||(!hardware&&!dns&&!no_runtime_actors(runtime))) goto done;
+    if(runtime<0||(!hardware&&!dns&&!clock_service&&!no_runtime_actors(runtime))) goto done;
     lock=boot_lock(runtime,"boot.lock",status);
     if(lock<0) { result="busy"; goto done; }
     if((!lab&&production_chain(runtime,status))||policy_chain_read(runtime,0,chain,sizeof(chain))||(!lab&&strcmp(chain,"LISACQ_BOOT"))) goto done;
@@ -220,6 +226,12 @@ int main(int argc,char **argv) {
         completed=network_dns_operation(runtime,runtime_path,lab?argv[2]:"/bkupgrade/data/opt/lisa-station",boot,dns,lab);
         dns_ok=completed?"true":"false";result=completed?"ok":"denied";goto done;
     }
+    if(clock_service){
+        ready=ownership&&complete==0&&label_policy_verified(chain)&&!boot_policy_foreign_writers(&names,0);
+        if(!ready&&clock_service!=3)goto done;
+        completed=time_operation(runtime,runtime_path,lab?argv[2]:"/bkupgrade/data/opt/lisa-station",boot,clock_service,lab);
+        clock_ok=completed?"true":"false";result=completed?"ok":"denied";goto done;
+    }
     if(status) {
         ready=ownership&&complete==0&&label_policy_verified(chain)&&!boot_policy_foreign_writers(&names,0);
         result=ready?"ok":"denied";completed=ready;goto done;
@@ -238,7 +250,7 @@ done: ;
     if(observed) { snprintf(legacy_text,sizeof(legacy_text),"%u",legacy); snprintf(tagged_text,sizeof(tagged_text),"%u",tagged); }
     printf("{\"event\":\"station-boot\",\"operation\":\"%s\",\"result\":\"%s\",\"lab_policy_only\":%s,\"requested_mode\":\"%s\","
         "\"namespace_owned\":%s,\"policy_ready\":%s,\"known_legacy_actors\":%s,\"tagged_actors\":%s,\"vendor_started\":false,"
-        "\"unrelated_controls_verified\":%s,\"hardware_operation_ok\":%s,\"dns_operation_ok\":%s,\"elapsed_ms\":%" PRIu64 ",\"stock_fallback\":false,\"isolation_verified\":false}\n",argv[1]+2,result,lab?"true":"false",requested,ownership?"true":"false",ready?"true":"false",legacy_text,tagged_text,controls,hardware_ok,dns_ok,guardian_milliseconds()-began);
+        "\"unrelated_controls_verified\":%s,\"hardware_operation_ok\":%s,\"dns_operation_ok\":%s,\"time_operation_ok\":%s,\"elapsed_ms\":%" PRIu64 ",\"stock_fallback\":false,\"isolation_verified\":false}\n",argv[1]+2,result,lab?"true":"false",requested,ownership?"true":"false",ready?"true":"false",legacy_text,tagged_text,controls,hardware_ok,dns_ok,clock_ok,guardian_milliseconds()-began);
     if(lock>=0) close(lock);
     if(mode_lock>=0) close(mode_lock);
     if(state>=0) close(state);

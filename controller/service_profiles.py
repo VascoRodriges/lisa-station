@@ -39,11 +39,21 @@ class ServiceProfiles:
     time: str
 
 
-def compile_profiles(dns_servers, ntp_servers, *, probe_directory=None, dns_port=53, network_directory=None):
+def compile_profiles(
+    dns_servers,
+    ntp_servers,
+    *,
+    probe_directory=None,
+    dns_port=53,
+    network_directory=None,
+    lab_clock_control=False,
+):
     if type(dns_port) is not int:
         raise ValueError("numeric integer DNS port required")
     dns = numeric_servers(dns_servers)
     ntp = numeric_servers(ntp_servers)
+    if type(lab_clock_control) is not bool or (lab_clock_control and network_directory is None):
+        raise ValueError("clock-control laboratory profile requires its explicit network runtime")
     if probe_directory is not None and network_directory is not None:
         raise ValueError("choose one explicit laboratory runtime")
     if network_directory is not None:
@@ -101,4 +111,6 @@ def compile_profiles(dns_servers, ntp_servers, *, probe_directory=None, dns_port
     clock += [f"pidfile {time_runtime}/chronyd.pid", "port 0", "cmdport 0", "bindcmdaddress /"]
     if probe_directory is None and network_directory is None:
         clock += ["driftfile /data/opt/lisa-station/time/drift", "makestep 1.0 3", "rtcsync"]
+    elif lab_clock_control:
+        clock += [f"driftfile {network_directory}/time-drift/drift", "makestep 1.0 3", "rtcsync"]
     return ServiceProfiles("\n".join(resolver) + "\n", "\n".join(clock) + "\n")

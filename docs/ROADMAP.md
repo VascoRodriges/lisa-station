@@ -110,3 +110,7 @@ The [independent DNS handler](INDEPENDENT_DNS.md) now has a pre-dropped identity
 private filesystem, native profile validation and actual four-listener evidence.
 Its port-53 handoff passes and restores stock DNS; persistent time/boot/mode
 composition and full isolation remain pending.
+The [independent clock handler](INDEPENDENT_TIME.md) now limits chronyd to
+SYS_TIME and a private filesystem. A single-controller handoff selected an NTP
+source, recorded successful kernel adjustments and restored stock time.
+Independent boot failure handling, Alice return and installation remain pending.

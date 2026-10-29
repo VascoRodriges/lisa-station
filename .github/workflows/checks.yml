@@ -59,6 +59,8 @@ jobs:
       - run: python controller/build.py --target boot-state-probe
       - run: python controller/build.py --target auxiliary-probe
       - run: python controller/build.py --target dns-profile-probe
+      - run: python controller/build.py --target time-guard-probe
+      - run: python controller/build.py --target time-clock-proof
       - name: Exercise mode storage on the host
         run: |
           cc -O2 -Wall -Wextra -Werror controller/mode_store_probe.c -o build/mode-store-host
@@ -100,6 +102,9 @@ jobs:
           ./build/auxiliary-host
           cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/dns_profile_probe.c -o build/dns-profile-host
           ./build/dns-profile-host
+          cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/time_guard_probe.c -o build/time-guard-host
+          ./build/time-guard-host
+          cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror -shared -fPIC controller/time_clock_proof.c -ldl -o build/time-clock-proof-host.so
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: station-controller-armhf
@@ -224,3 +229,11 @@ jobs:
         with:
           name: station-dns-profile-qualification-armhf
           path: build/dns-profile-probe.armhf
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: station-time-guard-qualification-armhf
+          path: build/time-guard-probe.armhf
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: station-clock-call-proof-armhf
+          path: build/time-clock-proof.so

@@ -43,7 +43,7 @@ static inline int network_dns_isolate(void) {
         chroot(network_jail)||chdir("/"))return -1;
     return 0;
 }
-static inline int network_dns_filter(void) {
+static inline int network_service_filter(int clock_control) {
 #if defined(__arm__)
     const unsigned architecture=AUDIT_ARCH_ARM;
 #elif defined(__x86_64__)
@@ -52,6 +52,7 @@ static inline int network_dns_filter(void) {
 #error Unsupported network guard architecture
 #endif
 #define NET_DENY(n) BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K,n,0,1),BPF_STMT(BPF_RET|BPF_K,SECCOMP_RET_ERRNO|EPERM)
+#define NET_CLOCK(n) BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K,n,0,1),BPF_STMT(BPF_RET|BPF_K,clock_control==1?SECCOMP_RET_ALLOW:SECCOMP_RET_ERRNO|EPERM)
     struct sock_filter filter[]={
         BPF_STMT(BPF_LD|BPF_W|BPF_ABS,offsetof(struct seccomp_data,arch)),
         BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K,architecture,1,0),BPF_STMT(BPF_RET|BPF_K,SECCOMP_RET_KILL),
@@ -78,9 +79,12 @@ static inline int network_dns_filter(void) {
         NET_DENY(SYS_setuid32),NET_DENY(SYS_setgid32),NET_DENY(SYS_setresuid32),NET_DENY(SYS_setresgid32),
         NET_DENY(SYS_setreuid32),NET_DENY(SYS_setregid32),NET_DENY(SYS_setfsuid32),NET_DENY(SYS_setfsgid32),NET_DENY(SYS_setgroups32),
 #endif
-        NET_DENY(SYS_clock_settime),NET_DENY(SYS_clock_adjtime),NET_DENY(SYS_adjtimex),NET_DENY(SYS_settimeofday),
+        NET_CLOCK(SYS_clock_settime),NET_CLOCK(SYS_clock_adjtime),NET_CLOCK(SYS_adjtimex),NET_CLOCK(SYS_settimeofday),
+#ifdef SYS_stime
+        NET_CLOCK(SYS_stime),
+#endif
 #ifdef SYS_clock_settime64
-        NET_DENY(SYS_clock_settime64),NET_DENY(SYS_clock_adjtime64),
+        NET_CLOCK(SYS_clock_settime64),NET_CLOCK(SYS_clock_adjtime64),
 #endif
 #ifdef SYS_socketcall
         NET_DENY(SYS_socketcall),
@@ -111,9 +115,11 @@ static inline int network_dns_filter(void) {
         BPF_STMT(BPF_RET|BPF_K,SECCOMP_RET_ERRNO|EPERM),BPF_STMT(BPF_RET|BPF_K,SECCOMP_RET_ALLOW),
     };
 #undef NET_DENY
+#undef NET_CLOCK
     struct sock_fprog program={sizeof(filter)/sizeof(filter[0]),filter};
     return prctl(PR_SET_SECCOMP,SECCOMP_MODE_FILTER,&program)||vendor_ipc_guard()?-1:0;
 }
+static inline int network_dns_filter(void) {return network_service_filter(0);}
 static inline int network_dns_prepare(void) {
     if(network_dns_isolate())return -1;
     for(unsigned cap=0;cap<=CAP_LAST_CAP;++cap)

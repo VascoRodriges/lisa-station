@@ -41,6 +41,8 @@ parser.add_argument(
         "boot-state-probe",
         "auxiliary-probe",
         "dns-profile-probe",
+        "time-guard-probe",
+        "time-clock-proof",
     ),
     default="station-ctl",
 )
@@ -78,8 +80,10 @@ sources = {
     "boot-state-probe": "boot_state_probe.c",
     "auxiliary-probe": "auxiliary_probe.c",
     "dns-profile-probe": "dns_profile_probe.c",
+    "time-guard-probe": "time_guard_probe.c",
+    "time-clock-proof": "time_clock_proof.c",
 }
-output = root / "build" / (args.target + ".armhf")
+output = root / "build" / (args.target + (".so" if args.target == "time-clock-proof" else ".armhf"))
 output.parent.mkdir(exist_ok=True)
 assert subprocess.check_output([args.zig, "version"], text=True).strip() == "0.14.1"
 subprocess.run(
@@ -94,7 +98,8 @@ subprocess.run(
         "-Wextra",
         "-Werror",
         str(root / "controller" / sources[args.target]),
-        *(["-ldl"] if args.target == "diagnostics-guard-probe" else []),
+        *(["-ldl"] if args.target in {"diagnostics-guard-probe", "time-clock-proof"} else []),
+        *(["-shared", "-fPIC"] if args.target == "time-clock-proof" else []),
         "-o",
         str(output),
     ],

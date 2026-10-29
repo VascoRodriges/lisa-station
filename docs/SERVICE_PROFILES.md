@@ -3,6 +3,8 @@
 These are development components. The [guarded independent DNS handler](INDEPENDENT_DNS.md)
 now supports a bounded resolver-only handoff, but is not installed. These
 components do not enable the HA mode selector; isolation remains unknown.
+The [guarded independent clock](INDEPENDENT_TIME.md) also has an actual
+single-controller synchronization handoff; its production boot is not installed.
 
 ## Explicit service profiles
 
