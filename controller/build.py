@@ -34,6 +34,9 @@ parser.add_argument(
         "udp-evidence-probe",
         "connmark-probe",
         "label-policy-probe",
+        "station-init",
+        "boot-runner-probe",
+        "boot-dispatch-probe",
     ),
     default="station-ctl",
 )
@@ -64,6 +67,9 @@ sources = {
     "udp-evidence-probe": "udp_evidence_probe.c",
     "connmark-probe": "connmark_probe.c",
     "label-policy-probe": "label_policy_probe.c",
+    "station-init": "station_init.c",
+    "boot-runner-probe": "boot_runner_probe.c",
+    "boot-dispatch-probe": "boot_dispatch_probe.c",
 }
 output = root / "build" / (args.target + ".armhf")
 output.parent.mkdir(exist_ok=True)

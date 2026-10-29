@@ -95,3 +95,6 @@ The [labelled startup trial](LABELLED_STARTUP.md) now composes marking admission
 before the four actual guarded roles with their shared durable close. Full
 coordinator ownership and production boot remain pending; its separate SIGKILL
 watchdog trial restored stock services and all owned rules successfully.
+The [bounded boot dispatcher](BOOT_DISPATCH.md) now has fixed helper entry points
+and real-shell failure fixtures preserving recovery. It is not installed;
+the coordinator, hardware adapter, installer and cold-boot acceptance remain.

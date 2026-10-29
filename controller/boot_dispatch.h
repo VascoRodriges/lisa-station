@@ -1,0 +1,28 @@
+/* Exported verbatim by station-init. Missing/failed helpers never execute a
+ * stock vendor fallback. Ordinary init and independent recovery still run. */
+#ifndef LISA_BOOT_DISPATCH_H
+#define LISA_BOOT_DISPATCH_H
+static const char lisa_boot_dispatch[]=
+"#!/bin/sh\n"
+"# Lisa Station boot dispatcher. Keep recovery independent of the controller.\n"
+"runner=/bkupgrade/data/opt/lisa-station/bin/station-init\n"
+"boot_ready=0\n"
+"if \"$runner\" --bootstrap </dev/null; then boot_ready=1; fi\n"
+"for i in /etc/init.d/S??*; do\n"
+"    [ -f \"$i\" ] || continue\n"
+"    # Network initialization precedes the first gated service. Open recovery\n"
+"    # now, before any later controller operation can fail or time out.\n"
+"    if [ \"$i\" = /etc/init.d/S46hardvold ]; then\n"
+"        /etc/init.d/S99zdropbear start </dev/null\n"
+"    fi\n"
+"    case \"$i\" in\n"
+"        /etc/init.d/S46hardvold) [ \"$boot_ready\" = 1 ] && \"$runner\" --hardware-start </dev/null;;\n"
+"        /etc/init.d/S47alsa-audio-monitor) [ \"$boot_ready\" = 1 ] && \"$runner\" --diagnostics-stage </dev/null;;\n"
+"        /etc/init.d/S49chrony) [ \"$boot_ready\" = 1 ] && \"$runner\" --time-start </dev/null;;\n"
+"        /etc/init.d/S70unbound) [ \"$boot_ready\" = 1 ] && \"$runner\" --dns-start </dev/null;;\n"
+"        /etc/init.d/S99quasar) [ \"$boot_ready\" = 1 ] && \"$runner\" --vendor-start </dev/null;;\n"
+"        *.sh) (trap - INT QUIT TSTP; set -- start; . \"$i\");;\n"
+"        *) \"$i\" start;;\n"
+"    esac\n"
+"done\n";
+#endif

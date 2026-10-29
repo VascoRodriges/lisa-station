@@ -52,6 +52,9 @@ jobs:
       - run: python controller/build.py --target udp-evidence-probe
       - run: python controller/build.py --target connmark-probe
       - run: python controller/build.py --target label-policy-probe
+      - run: python controller/build.py --target station-init
+      - run: python controller/build.py --target boot-runner-probe
+      - run: python controller/build.py --target boot-dispatch-probe
       - name: Exercise mode storage on the host
         run: |
           cc -O2 -Wall -Wextra -Werror controller/mode_store_probe.c -o build/mode-store-host
@@ -80,6 +83,11 @@ jobs:
           cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/connmark_probe.c -o build/connmark-host
           cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/label_policy_probe.c -o build/label-policy-host
           ./build/label-policy-host
+          cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/boot_runner_probe.c -o build/boot-runner-host
+          chmod 700 build/boot-runner-host
+          ./build/boot-runner-host
+          cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/station_init.c -o build/station-init-host
+          cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/boot_dispatch_probe.c -o build/boot-dispatch-host
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: station-controller-armhf
@@ -176,3 +184,15 @@ jobs:
         with:
           name: station-label-policy-qualification-armhf
           path: build/label-policy-probe.armhf
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: station-init-armhf
+          path: build/station-init.armhf
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: station-boot-runner-qualification-armhf
+          path: build/boot-runner-probe.armhf
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: station-boot-dispatch-qualification-armhf
+          path: build/boot-dispatch-probe.armhf
