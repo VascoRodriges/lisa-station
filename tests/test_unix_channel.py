@@ -8,11 +8,11 @@ from controller.qualify_unix_channel import evaluate_events
 
 
 def evidence():
-    first = dict(event="unix-channel-epoch", epoch=1, actor_checks=39, failures=0, own_mock_only=True)
+    first = dict(event="unix-channel-epoch", epoch=1, actor_checks=63, failures=0, own_mock_only=True)
     summary = dict(
         selftest="unix-channel",
         checks=36,
-        actor_checks=78,
+        actor_checks=127,
         epochs=2,
         failures=0,
         ok=True,
@@ -22,7 +22,7 @@ def evidence():
     )
     return [
         first,
-        dict(first, epoch=2),
+        dict(first, epoch=2, actor_checks=64),
         summary,
         dict(event="unix-channel-exit", code=0),
         dict(event="unix-channel-cleanup", ok=True),
@@ -38,8 +38,8 @@ def test_accepts_two_complete_channel_epochs():
     "key,value",
     [
         ("epoch", True),
-        ("actor_checks", 38),
-        ("actor_checks", 39.0),
+        ("actor_checks", 62),
+        ("actor_checks", 63.0),
         ("failures", False),
         ("failures", 1),
         ("own_mock_only", False),
@@ -57,7 +57,7 @@ def test_rejects_incomplete_or_reinterpreted_epoch(index, key, value):
     "key,value",
     [
         ("checks", 35),
-        ("actor_checks", 77),
+        ("actor_checks", 126),
         ("epochs", True),
         ("failures", False),
         ("ok", False),

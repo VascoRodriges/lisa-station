@@ -16,6 +16,7 @@
 #include <time.h>
 #include "platform_worker_guard.h"
 #include "unix_byte_channel.h"
+#include "unix_byte_adapter.h"
 #include "loopback_socket.h"
 #ifdef __arm__
 #include "startup_guardian.h"
@@ -99,13 +100,54 @@ static int actor(int channel,int output,int control,pid_t parent,const char *nam
 #ifdef SYS_io_uring_setup
     DENIED(syscall(SYS_io_uring_setup,1,NULL));
 #endif
-    struct iovec input={&byte,1};check(readv(channel,&input,1)==1&&byte=='K');check(fd_count()==6);
-    char a='O',b='K';struct iovec reply[2]={{&a,1},{&b,1}};check(writev(channel,reply,2)==2);
+    struct unix_byte_adapter adapter,wrong;
+    check(!unix_byte_adapter_init(&adapter,channel,parent));
+    errno=0;check(unix_byte_adapter_init(&wrong,output,parent)<0&&errno==EPERM);
+    errno=0;check(unix_byte_adapter_send(&adapter,NULL,0)<0&&errno==EFAULT);
+    errno=0;check(unix_byte_adapter_receive(&adapter,NULL,0)<0&&errno==EFAULT);
+    struct iovec input={&byte,1};struct msghdr bytes={.msg_iov=&input,.msg_iovlen=1};
+    struct msghdr invalid=bytes;invalid.msg_control=ancillary.bytes;invalid.msg_controllen=sizeof(ancillary.bytes);
+    errno=0;check(unix_byte_adapter_send(&adapter,&invalid,0)<0&&errno==EOPNOTSUPP);
+    invalid=bytes;invalid.msg_name=&target;invalid.msg_namelen=length;
+    errno=0;check(unix_byte_adapter_send(&adapter,&invalid,0)<0&&errno==EOPNOTSUPP);
+    invalid=bytes;invalid.msg_iovlen=BYTE_ADAPTER_VECTORS+1;
+    errno=0;check(unix_byte_adapter_send(&adapter,&invalid,0)<0&&errno==EMSGSIZE);
+    invalid=bytes;invalid.msg_iov=NULL;
+    errno=0;check(unix_byte_adapter_send(&adapter,&invalid,0)<0&&errno==EFAULT);
+    struct iovec no_buffer={NULL,1};invalid=bytes;invalid.msg_iov=&no_buffer;
+    errno=0;check(unix_byte_adapter_receive(&adapter,&invalid,0)<0&&errno==EFAULT);
+    struct unix_byte_adapter mismatched=adapter;mismatched.inode^=1;
+    errno=0;check(unix_byte_adapter_send(&mismatched,&bytes,0)<0&&errno==EPERM);
+    struct iovec large={&byte,BYTE_ADAPTER_BYTES+1};invalid=bytes;invalid.msg_iov=&large;
+    errno=0;check(unix_byte_adapter_send(&adapter,&invalid,0)<0&&errno==EMSGSIZE);
+    errno=0;check(unix_byte_adapter_send(&adapter,&bytes,MSG_FASTOPEN)<0&&errno==EOPNOTSUPP);
+    errno=0;check(unix_byte_adapter_receive(&adapter,&bytes,MSG_PEEK)<0&&errno==EOPNOTSUPP);
+    errno=0;check(unix_byte_adapter_receive(&adapter,&bytes,MSG_DONTWAIT)<0&&errno==EOPNOTSUPP);
+    struct sigaction action={0};action.sa_handler=SIG_DFL;sigemptyset(&action.sa_mask);
+    check(!sigaction(SIGPIPE,&action,NULL));
+    errno=0;check(unix_byte_adapter_send(&adapter,&bytes,MSG_NOSIGNAL)<0&&errno==EOPNOTSUPP);
+    action.sa_handler=SIG_IGN;check(!sigaction(SIGPIPE,&action,NULL));
+    bytes.msg_control=ancillary.bytes;bytes.msg_controllen=sizeof(ancillary.bytes);bytes.msg_flags=123;
+    check(unix_byte_adapter_receive(&adapter,&bytes,MSG_CMSG_CLOEXEC)==1&&byte=='K'&&
+        !bytes.msg_controllen&&!bytes.msg_namelen&&!bytes.msg_flags);check(fd_count()==6);
+    struct msghdr empty={0};check(unix_byte_adapter_send(&adapter,&empty,0)==0);
+    check(unix_byte_adapter_receive(&adapter,&empty,0)==0);
+    int original_mode=fcntl(channel,F_GETFL);check(original_mode>=0&&!fcntl(channel,F_SETFL,original_mode|O_NONBLOCK));
+    errno=0;check(unix_byte_adapter_receive(&adapter,&bytes,MSG_DONTWAIT|MSG_CMSG_CLOEXEC)<0&&(errno==EAGAIN||errno==EWOULDBLOCK));
+    check(!fcntl(channel,F_SETFL,original_mode));
+    char a='O',b='K';struct iovec reply[2]={{&a,1},{&b,1}};struct msghdr response={.msg_iov=reply,.msg_iovlen=2};
+    check(unix_byte_adapter_send(&adapter,&response,MSG_NOSIGNAL)==2);
     int alias=dup(channel);check(alias>=0);if(alias<0)return 9;
-    check(!close(channel)&&fd_count()==6);check(write(alias,"D",1)==1);
+    struct unix_byte_adapter duplicate;check(!unix_byte_adapter_init(&duplicate,alias,parent));
+    check(!close(channel)&&fd_count()==6);
+    errno=0;check(unix_byte_adapter_send(&adapter,&response,0)<0&&errno==EBADF);
+    char token='D';struct iovec data={&token,1};response.msg_iov=&data;response.msg_iovlen=1;
+    check(unix_byte_adapter_send(&duplicate,&response,MSG_NOSIGNAL)==1);
     char command=0;check(!read_full(control,&command,1)&&command=='C');
     char tail[4];check(!read_full(alias,tail,sizeof(tail))&&!memcmp(tail,"TAIL",sizeof(tail)));
-    errno=0;check(write(alias,"X",1)==-1&&errno==EPIPE);
+    if(epoch==2){struct msghdr ended={.msg_iov=&data,.msg_iovlen=1,.msg_flags=123};
+        check(unix_byte_adapter_receive(&duplicate,&ended,0)==0&&!ended.msg_flags&&!ended.msg_controllen&&!ended.msg_namelen);}
+    errno=0;check(unix_byte_adapter_send(&duplicate,&response,MSG_NOSIGNAL)==-1&&errno==EPIPE);
     check(!close(alias)&&fd_count()==5);
     struct report result={checks,failures,epoch,getpid()};
     if(write(output,&result,sizeof(result))!=(ssize_t)sizeof(result))return 9;
@@ -169,16 +211,18 @@ static int selftest(const char *executable){
         close(pair[1]);close(reports[1]);close(commands[0]);
         check(!send_right(pair[0],canary));close(canary);
         char reply[3];int good=!read_full(pair[0],reply,sizeof(reply))&&!memcmp(reply,"OKD",sizeof(reply));check(good);
-        check(write(pair[0],"TAILSTALE",9)==9);close(pair[0]);
+        const char *queued=epoch?"TAIL":"TAILSTALE";size_t queued_size=strlen(queued);
+        check(write(pair[0],queued,queued_size)==(ssize_t)queued_size);close(pair[0]);
         check(write(commands[1],"C",1)==1);close(commands[1]);
         struct report result={0};good=!read_full(reports[0],&result,sizeof(result));close(reports[0]);
-        check(good&&result.process==child&&result.epoch==epoch+1&&!result.failures&&result.checks>=30&&result.checks<=64);
+        check(good&&result.process==child&&result.epoch==epoch+1&&!result.failures&&result.checks>=45&&result.checks<=80);
         if(good)total+=result.checks;else kill(child,SIGKILL);
         int status;check(waitpid(child,&status,0)==child&&WIFEXITED(status)&&!WEXITSTATUS(status));
         struct pollfd ready={listener,POLLIN,0};check(poll(&ready,1,0)==0);
         printf("{\"event\":\"unix-channel-epoch\",\"epoch\":%u,\"actor_checks\":%u,\"failures\":%u,\"own_mock_only\":true}\n",epoch+1,result.checks,result.failures);fflush(stdout);
     }
-    for(unsigned i=0;i<2;++i){char stale[5];check(!read_full(held[i],stale,sizeof(stale))&&!memcmp(stale,"STALE",5));close(held[i]);}
+    char stale[5];check(!read_full(held[0],stale,sizeof(stale))&&!memcmp(stale,"STALE",5));close(held[0]);
+    check(read(held[1],stale,1)==0);close(held[1]);
     for(unsigned i=0;i<2;++i){close(invalid[i][0]);close(invalid[i][1]);}
     int client=socket(AF_UNIX,SOCK_STREAM|SOCK_CLOEXEC,0);check(client>=0&&!connect(client,(struct sockaddr *)&address,length));
     int accepted=accept4(listener,NULL,NULL,SOCK_CLOEXEC);check(accepted>=0);if(client>=0)close(client);if(accepted>=0)close(accepted);close(listener);

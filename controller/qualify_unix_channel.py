@@ -86,7 +86,7 @@ def evaluate_events(events):
             and type(row.get("epoch")) is int
             and row["epoch"] == index
             and type(row.get("actor_checks")) is int
-            and row["actor_checks"] == 39
+            and row["actor_checks"] == 62 + index
             and type(row.get("failures")) is int
             and row["failures"] == 0
             and row.get("own_mock_only") is True
@@ -106,7 +106,7 @@ def evaluate_events(events):
     summary = events[2]
     if summary != expected or any(type(summary.get(k)) is not type(v) for k, v in expected.items()):
         return False
-    if events[0]["actor_checks"] != events[1]["actor_checks"]:
+    if events[0]["actor_checks"] + 1 != events[1]["actor_checks"]:
         return False
     return (
         events[3] == dict(event="unix-channel-exit", code=0)

@@ -195,3 +195,9 @@ retarget/descriptor-passing denial and fresh channels despite retained old queue
 references. It uses only own mock endpoints and has not opened the real bus or
 changed the SDK’s network policy. Protocol adapters and receiver revocation remain
 required before production composition.
+
+The [byte-only message adapter](BYTE_MESSAGE_ADAPTER.md) now transports bounded
+vectored payloads under the unchanged kernel syscall restrictions. Own mock tests
+cover FD identity, ancillary rejection/discard, nonblocking and signal contracts,
+EOF and EPIPE. SDK factory/binding, real bus authorization and production switching
+remain unfinished; no real services were opened by this adapter.

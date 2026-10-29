@@ -25,8 +25,9 @@ capability drops, approved broker protocols and receiver lifecycle checks.
 
 ## Kernel evidence
 
-Two epochs passed **114 checks on the speaker**: 36 parent checks and 39 child checks
-per epoch. A fortified x86 Linux host passed **102 checks**; six additional ARM
+Two epochs passed **163 checks on the speaker**: 36 parent checks and 63/64 child checks
+per epoch, including the [byte-only message adapter](BYTE_MESSAGE_ADAPTER.md).
+A fortified x86 Linux host passed **151 checks**; six additional ARM
 checks cover direct send/recv, time64 and legacy syscall exclusions.
 
 The parent creates only an own abstract canary listener and preconnected pairs.
@@ -36,7 +37,7 @@ SCM_RIGHTS message carries an empty, unlinked fixture file. The child’s denied
 recvmsg leaves it queued; readv receives its byte without adding a descriptor.
 Descriptor counts agree before and after. Vectored byte replies work.
 
-The test deliberately retains an alias of each old receiving endpoint. After the
+The test deliberately retains an alias of the first old receiving endpoint. After the
 peer closes, queued synthetic bytes remain readable through that alias. Thus peer
 closure alone is not a queue-purge guarantee. The next child receives a fresh socket
 object and no old descriptor; retained old bytes are read separately by the trusted
@@ -52,7 +53,7 @@ Ruff, the public-source check and **1278 Python/HA tests** passed. CI now includ
 **40 native targets**, with the channel probe built for ARM and exercised on its
 host. The qualified ARM SHA256 is:
 
-`3af497acba5fde891421631a666a8360b6b4a8ab94acbe6eb6a004864b07c5db`
+`fc004739b043428fd3a9765cc4f3ead406af711175176c97ad54ddd66269b81c`
 
 ```sh
 python controller/build.py --target unix-channel-probe
