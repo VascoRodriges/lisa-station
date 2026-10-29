@@ -49,6 +49,7 @@ jobs:
       - run: python controller/build.py --target unix-peer-probe
       - run: python controller/build.py --target composite-roles-probe
       - run: python controller/build.py --target ipc-guard-probe
+      - run: python controller/build.py --target udp-evidence-probe
       - name: Exercise mode storage on the host
         run: |
           cc -O2 -Wall -Wextra -Werror controller/mode_store_probe.c -o build/mode-store-host
@@ -72,6 +73,8 @@ jobs:
           ./build/composite-roles-host
           cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/ipc_guard_probe.c -o build/ipc-guard-host
           ./build/ipc-guard-host --selftest
+          cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/udp_evidence_probe.c -o build/udp-evidence-host
+          ./build/udp-evidence-host --selftest
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: station-controller-armhf
@@ -156,3 +159,7 @@ jobs:
         with:
           name: station-ipc-guard-armhf
           path: build/ipc-guard-probe.armhf
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: station-udp-evidence-armhf
+          path: build/udp-evidence-probe.armhf

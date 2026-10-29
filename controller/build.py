@@ -31,6 +31,7 @@ parser.add_argument(
         "unix-peer-probe",
         "composite-roles-probe",
         "ipc-guard-probe",
+        "udp-evidence-probe",
     ),
     default="station-ctl",
 )
@@ -58,6 +59,7 @@ sources = {
     "unix-peer-probe": "unix_peer_probe.c",
     "composite-roles-probe": "composite_roles_probe.c",
     "ipc-guard-probe": "ipc_guard_probe.c",
+    "udp-evidence-probe": "udp_evidence_probe.c",
 }
 output = root / "build" / (args.target + ".armhf")
 output.parent.mkdir(exist_ok=True)

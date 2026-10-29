@@ -86,3 +86,6 @@ The [four-role startup trial](SPLIT_STARTUP.md) now runs the actual platform/med
 collector, telemetry and diagnostics under separate guards and closes them
 together. It verifies executable object identity across jail aliases; platform
 filesystem isolation and permanent deployment remain pending.
+The [UDP holder audit](UDP_EVIDENCE.md) now verifies endpoint/FD metadata and
+records the speaker's missing UDP_DIAG capability explicitly. Unconnected UDP
+destinations remain unattributed; this audit never authorizes a flow policy.
