@@ -152,3 +152,9 @@ corruption. Its own-flow trial closes old/new service sockets while preserving
 unrelated controls; restored primary bytes cannot bypass the retained fault.
 Permanent supervision, restart reconstruction, all fault paths and explicit
 repair remain required before production installation.
+
+The [emergency restart path](EMERGENCY_RESTART.md) now reconstructs the reserved
+scope independently of damaged primary files and continues a known partial
+barrier. A nine-death transaction preserves the fault and denies old/new service
+flows. Permanent supervision, all intent-journal fault paths and production boot
+integration remain required.

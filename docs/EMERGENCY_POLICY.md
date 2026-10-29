@@ -84,9 +84,10 @@ python -m controller.qualify_emergency YOUR_SPEAKER_SSH_ALIAS \
 
 This is a bounded SSH-parented laboratory watcher. Its cached emergency path was
 qualified for primary-policy record corruption after healthy intent-journal
-inspection. Permanent supervision, restart reconstruction of that cache,
-integration of every journal-fault path, explicit repair/unlatching and supervisor
-death acceptance remain required. A damaged emergency chain is refused rather
+inspection. The later [restart trial](EMERGENCY_RESTART.md) reconstructs that cache
+and completes a transaction across nine coordinator deaths. Permanent supervision,
+integration of every journal-fault path, explicit repair/unlatching and installed
+boot acceptance remain required. A damaged emergency chain is refused rather
 than overwritten or silently declared closed. Failed fault publication still
 attempts selective denial but cannot report a durably successful close.
 

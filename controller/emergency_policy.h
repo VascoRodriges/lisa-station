@@ -34,6 +34,26 @@ static inline int emergency_read(int directory,uid_t owner,int fault,const struc
     if(close(fd))valid=0;
     return valid&&used==size&&!memcmp(expected,actual,(size_t)size)?0:-1;
 }
+/* Restart reconstruction reads only the separately reserved immutable owner.
+ * Fixed current-boot/configured namespace inputs come from the supervisor, not
+ * from a packet snapshot or a damaged primary record. This is scope metadata,
+ * never permission to open; actual chains/hooks must be checked separately. */
+static inline int emergency_scope_read(int directory,uid_t owner,const char *boot,const char *chain,struct epoch_owner *scope){
+    struct label_policy_names names;
+    if(!scope||!gate_boot_valid(boot)||label_policy_names(chain,&names)||!store_directory_valid(directory,owner))return -1;
+    int fd=openat(directory,"emergency.owner",O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC);if(fd<0)return -1;
+    char text[193],expected[192];ssize_t size;int valid=boot_ledger_file(fd,owner);
+    do{size=read(fd,text,sizeof(text)-1);}while(size<0&&errno==EINTR);
+    if(close(fd))valid=0;
+    if(!valid||size<=0||size==(ssize_t)sizeof(text)-1||memchr(text,0,(size_t)size))return -1;
+    text[size]=0;struct epoch_owner parsed={0};unsigned long long revision;int consumed=0;
+    if(sscanf(text,"LISA_EMERGENCY_V1 %36s %31s %llu " EPOCH_MASK_TEXT "\n%n",parsed.boot,parsed.chain,&revision,&consumed)!=3||
+        consumed!=size)return -1;
+    parsed.initial_revision=revision;
+    if(strcmp(parsed.boot,boot)||strcmp(parsed.chain,chain)||emergency_format(&parsed,0,expected,sizeof(expected))!=size||
+        memcmp(text,expected,(size_t)size))return -1;
+    *scope=parsed;return 0;
+}
 static inline int emergency_publish(int directory,uid_t owner,int fault,const struct epoch_owner *scope){
     char text[192],temporary[64];uint64_t nonce;int size=emergency_format(scope,fault,text,sizeof(text));
     if(size<0||!store_directory_valid(directory,owner)||boot_ledger_nonce(&nonce))return -1;
@@ -124,6 +144,17 @@ static inline int emergency_armed(const struct emergency_cache *cache,int hooked
         for(unsigned i=0;i<(input?1u:2u);++i)if(hooks[family][input][i]!=(unsigned)hooked)return 0;
     return 1;
 }
+/* Restart may find a known partial hook prefix after death during activation.
+ * Reconstruct only a previously published scope with complete exact chains;
+ * the caller must then finish denial, never infer Alice admission from ready. */
+static inline int emergency_cache_reconstruct(int runtime,uid_t owner,const char *boot,const char *chain,struct emergency_cache *cache){
+    if(!cache)return -1;
+    memset(cache,0,sizeof(*cache));cache->owner=owner;
+    if(emergency_scope_read(runtime,owner,boot,chain,&cache->scope))return -1;
+    unsigned present[2][2][4],hooks[2][2][2];
+    if(emergency_snapshot(cache,1,0,present,hooks))return -1;
+    cache->ready=1;return 0;
+}
 static inline int emergency_reserve(struct epoch_mutation *primary,struct emergency_cache *cache){
     if(!primary||!cache||epoch_mutation_load(primary)||primary->record.phase!=EPOCH_CLOSED||!epoch_mutation_verified(primary,1))return -1;
     *cache=(struct emergency_cache){primary->owner,primary->lease->owner,0};
@@ -150,22 +181,32 @@ static inline int emergency_reserve(struct epoch_mutation *primary,struct emerge
 /* Caller serializes admission. Publication precedes hooks; hooks precede permit
  * revocation/actor shutdown. A failed publication still attempts selective
  * denial, but cannot be reported as durably closed. Never repairs primary files. */
-static inline int emergency_activate(const struct emergency_cache *cache,int state,int runtime){
+static inline int emergency_activate_observed(const struct emergency_cache *cache,int state,int runtime,
+    void (*checkpoint)(void *,unsigned),void *context){
     if(!cache||!cache->ready)return -1;
     int durable=emergency_publish(state,cache->owner,1,&cache->scope)==0;
+    if(durable&&checkpoint)checkpoint(context,1);
     unsigned present[2][2][4],hooks[2][2][2];struct emergency_names names;
     if(emergency_names(&cache->scope,&names)||emergency_snapshot(cache,1,0,present,hooks))return -1;
     for(unsigned family=0;family<2;++family)for(unsigned input=0;input<2;++input){
         char *name=family?"ip6tables":"iptables",*hook=input?"INPUT":"OUTPUT";
         char *targets[]={input?names.label:names.group,names.label};
-        for(unsigned i=0;i<(input?1u:2u);++i)if(!hooks[family][input][i]){
-            char position[4];snprintf(position,sizeof(position),"%u",i+1);
-            char *const insert[]={name,"-t","filter","-I",hook,position,"-j",targets[i],NULL};
-            if(boot_policy_command(family,insert))return -1;
+        for(unsigned i=0;i<(input?1u:2u);++i){
+            if(!hooks[family][input][i]){
+                char position[4];snprintf(position,sizeof(position),"%u",i+1);
+                char *const insert[]={name,"-t","filter","-I",hook,position,"-j",targets[i],NULL};
+                if(boot_policy_command(family,insert))return -1;
+            }
+            if(checkpoint)checkpoint(context,input?4+family*3:2+family*3+i);
         }
     }
     if(!emergency_armed(cache,1))return -1;
+    if(checkpoint)checkpoint(context,8);
     int revoked=close_revoke(runtime)==0;
+    if(revoked&&checkpoint)checkpoint(context,9);
     return durable&&revoked?0:-1;
+}
+static inline int emergency_activate(const struct emergency_cache *cache,int state,int runtime){
+    return emergency_activate_observed(cache,state,runtime,NULL,NULL);
 }
 #endif

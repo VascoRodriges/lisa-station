@@ -126,6 +126,28 @@ static int emergency_selftest(const char *base){
  CHECK(!linkat(state,"emergency.owner",state,"alias",0)&&emergency_read(state,owner,0,&scope)<0);
  CHECK(!unlinkat(state,"alias",0)&&!fchmodat(state,"emergency.owner",0644,0)&&emergency_read(state,owner,0,&scope)<0);
  CHECK(!fchmodat(state,"emergency.owner",0600,0)&&!emergency_read(state,owner,0,&scope));
+ struct epoch_owner recovered={0};
+ CHECK(!emergency_scope_read(state,owner,scope.boot,scope.chain,&recovered)&&recovered.initial_revision==1);
+ CHECK(emergency_scope_read(state,owner,"21111111-2222-4333-8444-555555555555",scope.chain,&recovered)<0);
+ CHECK(emergency_scope_read(state,owner,scope.boot,"LISACQ_OTHER",&recovered)<0);
+ CHECK(!put(state,"epoch.owner","damaged primary\n")&&!put(state,"epoch.state","damaged state\n")&&
+  !emergency_scope_read(state,owner,scope.boot,scope.chain,&recovered));
+ const char *bad_scopes[]={
+  "LISA_EMERGENCY_V2 11111111-2222-4333-8444-555555555555 LISACQ_EMERGENCY 1 0xff000000\n",
+  "LISA_EMERGENCY_V1 11111111-2222-4333-8444-555555555555 LISACQ_EMERGENCY 01 0xff000000\n",
+  "LISA_EMERGENCY_V1 11111111-2222-4333-8444-555555555555 LISACQ_EMERGENCY 0 0xff000000\n",
+  "LISA_EMERGENCY_V1 11111111-2222-4333-8444-555555555555 LISACQ_EMERGENCY 18446744073709551615 0xff000000\n",
+  "LISA_EMERGENCY_V1 11111111-2222-4333-8444-555555555555 LISACQ_EMERGENCY 1 0x00ffffff\n",
+  "LISA_EMERGENCY_V1 11111111-2222-4333-8444-555555555555 LISACQ_EMERGENCY 1 0xff000000",
+  "LISA_EMERGENCY_V1 11111111-2222-4333-8444-555555555555 LISACQ_EMERGENCY 1 0xff000000\n\n"};
+ for(unsigned i=0;i<sizeof(bad_scopes)/sizeof(bad_scopes[0]);++i){
+  recovered.initial_revision=99;
+  CHECK(!put(state,"emergency.owner",bad_scopes[i])&&emergency_scope_read(state,owner,scope.boot,scope.chain,&recovered)<0&&recovered.initial_revision==99);
+ }
+ CHECK(!unlinkat(state,"emergency.owner",0)&&!symlinkat("epoch.owner",state,"emergency.owner")&&
+  emergency_scope_read(state,owner,scope.boot,scope.chain,&recovered)<0);
+ CHECK(!unlinkat(state,"emergency.owner",0)&&!emergency_publish(state,owner,0,&scope));
+ CHECK(!unlinkat(state,"epoch.owner",0)&&!unlinkat(state,"epoch.state",0));
  char expected[1024];CHECK(emergency_expected(&names,0,expected,sizeof(expected))>0&&strstr(expected,"57342")&&strstr(expected,"57345"));
  CHECK(emergency_expected(&names,1,expected,sizeof(expected))>0&&strstr(expected,"! --mark 0x0/0xff000000 -j DROP"));
  CHECK(!unlinkat(state,"emergency.owner",0)&&!unlinkat(state,"mode.state",0)&&!unlinkat(state,"mode.lock",0)&&!close(state)&&!rmdir(path));
@@ -213,7 +235,7 @@ static int lab_scope_absent(void *pointer){
  }
  closedir(directory);return absent;
 }
-struct lab_context{struct epoch_mutation mutation;struct emergency_cache emergency;int state,emergency_enabled,emergency_closed;unsigned fault,hold;};
+struct lab_context{struct epoch_mutation mutation;struct emergency_cache emergency;int state,emergency_enabled,emergency_closed;unsigned emergency_fault;unsigned fault,hold;};
 static int lab_flag(int runtime,const char *name,const char *expected){
  int fd=openat(runtime,name,O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC);if(fd<0)return errno==ENOENT?0:-1;
  char text[96];ssize_t used=read(fd,text,sizeof(text));int valid=store_file_valid(fd,0);close(fd);
@@ -262,17 +284,42 @@ static int lab_verify_closed(void *pointer){
   !epoch_mutation_verified(&context->mutation,1)?-1:0;
 }
 
+/* Crash only this bounded laboratory coordinator at a fixed emergency phase.
+ * Administrative probes use fresh unrelated sockets and never open audio. */
+static void lab_emergency_checkpoint(void *pointer,unsigned step){
+ struct lab_context *context=pointer;if(!context->emergency_fault||context->emergency_fault!=step)return;
+ int runtime=context->mutation.lease->runtime;struct stat info;
+ int absent=fstatat(runtime,"vendor.permit",&info,AT_SYMLINK_NOFOLLOW)<0&&errno==ENOENT;
+ printf("{\"event\":\"emergency-checkpoint\",\"step\":%u,\"fault_present\":%s,\"permit_absent\":%s,\"policy_closed\":%s,\"control_ipv4\":%s,\"control_ipv6\":%s}\n",
+  step,mode_store_fault_pending(context->state,0)?"true":"false",absent?"true":"false",
+  emergency_armed(&context->emergency,1)?"true":"false",policy_control_socket(AF_INET)?"true":"false",policy_control_socket(AF_INET6)?"true":"false");
+ fflush(stdout);kill(getpid(),SIGKILL);_exit(99);
+}
+static int lab_emergency_resume(struct lab_context *context,const char *boot,const char *chain){
+ struct epoch_lease *epoch=context->mutation.lease;struct recovery_lease lease={.descriptor=-1};
+ enum recovery_action lock=recovery_lock(context->state,0,&lease);int reconstructed=0,closed=0;
+ if(lock==RECOVERY_CLEAR){
+  reconstructed=emergency_cache_reconstruct(epoch->runtime,0,boot,chain,&context->emergency)==0;
+  if(reconstructed)closed=emergency_activate_observed(&context->emergency,context->state,epoch->runtime,lab_emergency_checkpoint,context)==0;
+ }
+ int valid=reconstructed&&emergency_read(context->state,0,1,&context->emergency.scope)==0;
+ int barrier=reconstructed&&emergency_armed(&context->emergency,1);struct stat info;
+ int absent=fstatat(epoch->runtime,"vendor.permit",&info,AT_SYMLINK_NOFOLLOW)<0&&errno==ENOENT;
+ printf("{\"event\":\"emergency-resume\",\"result\":\"%s\",\"cache_reconstructed\":%s,\"fault_valid\":%s,\"policy_closed\":%s,\"permit_absent\":%s,\"control_ipv4\":%s,\"control_ipv6\":%s,\"automatic_open\":false,\"audio_opened\":false,\"isolation_verified\":false}\n",
+  closed?"ok":lock==RECOVERY_BUSY?"busy":"denied",reconstructed?"true":"false",valid?"true":"false",reconstructed?(barrier?"true":"false"):"null",absent?"true":"false",policy_control_socket(AF_INET)?"true":"false",policy_control_socket(AF_INET6)?"true":"false");
+ recovery_unlock(&lease);return closed&&valid&&barrier&&absent?0:4;
+}
 /* Called only by the optional emergency fixture, never interpreted as a
  * production actor/FD census. 1 healthy, 0 valid contention, -1 fault. */
 static int lab_health(struct lab_context *context){
  struct epoch_lease *epoch=context->mutation.lease;struct recovery_lease transition={.descriptor=-1};
  enum recovery_action action=recovery_lock(context->state,epoch->owner,&transition);
  if(action==RECOVERY_BUSY)return 0;
- if(action!=RECOVERY_CLEAR){context->emergency_closed=emergency_activate(&context->emergency,context->state,epoch->runtime)==0;return -1;}
+ if(action!=RECOVERY_CLEAR){context->emergency_closed=emergency_activate_observed(&context->emergency,context->state,epoch->runtime,lab_emergency_checkpoint,context)==0;return -1;}
  errno=0;
  if(epoch_store_lock(epoch->runtime,epoch->owner,epoch)){
   int busy=errno==EWOULDBLOCK;
-  if(!busy)context->emergency_closed=emergency_activate(&context->emergency,context->state,epoch->runtime)==0;
+  if(!busy)context->emergency_closed=emergency_activate_observed(&context->emergency,context->state,epoch->runtime,lab_emergency_checkpoint,context)==0;
   recovery_unlock(&transition);return busy?0:-1;
  }
  struct mode_record mode;struct stat info;
@@ -282,7 +329,7 @@ static int lab_health(struct lab_context *context){
   gate_permit_valid(epoch->runtime,epoch->owner,mode.revision,context->mutation.owner.boot)&&!mode_store_fault_pending(context->state,epoch->owner);
  else if(healthy)healthy=context->mutation.record.phase==EPOCH_CLOSED&&epoch_mutation_verified(&context->mutation,1)&&
   fstatat(epoch->runtime,"vendor.permit",&info,AT_SYMLINK_NOFOLLOW)<0&&errno==ENOENT;
- if(!healthy)context->emergency_closed=emergency_activate(&context->emergency,context->state,epoch->runtime)==0;
+ if(!healthy)context->emergency_closed=emergency_activate_observed(&context->emergency,context->state,epoch->runtime,lab_emergency_checkpoint,context)==0;
  recovery_unlock(&transition);return healthy?1:-1;
 }
 static int lab_watch(struct lab_context *context,unsigned lifetime){
@@ -352,15 +399,18 @@ int main(int argc,char **argv){
  if(getuid()||geteuid()||getgid()||getegid()||argc<3||argc>5)return 2;
  pid_t parent=getppid();if(prctl(PR_SET_PDEATHSIG,SIGKILL)||getppid()!=parent)return 2;
  int reserve=!strcmp(argv[1],"--lab-reserve"),status=!strcmp(argv[1],"--lab-status"),deny=!strcmp(argv[1],"--lab-deny");
- int holding=!strcmp(argv[1],"--lab-open-hold"),emergency=!strcmp(argv[1],"--lab-watch-emergency");
+ int crashing=!strcmp(argv[1],"--lab-watch-emergency-crash"),resuming=!strcmp(argv[1],"--lab-emergency-resume");
+ int holding=!strcmp(argv[1],"--lab-open-hold"),emergency=!strcmp(argv[1],"--lab-watch-emergency")||crashing;
  int watching=!strcmp(argv[1],"--lab-watch")||emergency;
  int opening=!strcmp(argv[1],"--lab-open")||holding,closing=!strcmp(argv[1],"--lab-close")||!strcmp(argv[1],"--lab-close-lisa");
- if(!reserve&&!status&&!deny&&!opening&&!closing&&!watching)return 2;
- if((watching&&argc!=4)||(holding&&argc!=5))return 2;
- if((opening||closing)?argc<4:(argc>4||(status&&argc!=3)))return 2;
+ if(!reserve&&!status&&!deny&&!opening&&!closing&&!watching&&!resuming)return 2;
+ if((watching&&argc!=(crashing?5:4))||(holding&&argc!=5)||(resuming&&argc>4))return 2;
+ if((opening||closing)?argc<4:((!crashing&&argc>4)||(status&&argc!=3)))return 2;
  uint64_t base=opening||closing?lab_number(argv[3]):0;
  uint64_t fault=argc==(opening||closing?5:4)?lab_number(argv[argc-1]):0;if(fault>1000)return 2;
- unsigned lifetime=watching?(unsigned)fault:0;if(watching&&(!lifetime||lifetime>120))return 2;
+ unsigned lifetime=watching?(unsigned)lab_number(argv[3]):0;if(watching&&(!lifetime||lifetime>120))return 2;
+ unsigned emergency_fault=crashing?(unsigned)lab_number(argv[4]):resuming?(unsigned)fault:0;
+ if(emergency_fault>9||(crashing&&!emergency_fault)||(resuming&&argc==4&&!fault&&strcmp(argv[3],"0")))return 2;
  const char prefix[]="/bkupgrade/data/opt/lisa-controller-lab/epoch-mutation.";
  if(strncmp(argv[2],prefix,sizeof(prefix)-1))return 2;
  const char *suffix=argv[2]+sizeof(prefix)-1;size_t length=strlen(suffix);if(length<6||length>16)return 2;
@@ -375,10 +425,11 @@ int main(int argc,char **argv){
  snprintf(path,sizeof(path),"%s/state",argv[2]);int state=lab_directory(path);close(directory);
  if(runtime<0||state<0){if(runtime>=0)close(runtime);if(state>=0)close(state);return 3;}
  alarm(watching?lifetime+5:45);struct epoch_lease lease={.descriptor=-1,.runtime=runtime,.owner=0};int result=-1;
- struct lab_context context={.state=state,.emergency_enabled=emergency,.fault=holding||watching?0:(unsigned)fault,.hold=holding?(unsigned)fault:0};
+ struct lab_context context={.state=state,.emergency_enabled=emergency,.emergency_fault=emergency_fault,.fault=holding||watching?0:(unsigned)fault,.hold=holding?(unsigned)fault:0};
  context.mutation.lease=&lease;context.mutation.checkpoint=lab_checkpoint;context.mutation.context=&context;
  struct mode_record mode={0};char chain[32];
  if(policy_chain_read(runtime,0,chain,sizeof(chain)))goto done;
+ if(resuming){int resumed=lab_emergency_resume(&context,boot,chain);close(runtime);close(state);return resumed;}
  if((reserve||status||deny)&&epoch_store_lock(runtime,0,&lease))goto done;
  int found=epoch_owner_read(runtime,0,&context.mutation.owner);
  if(found<0)goto done;

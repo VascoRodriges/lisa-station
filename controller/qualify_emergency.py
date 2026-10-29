@@ -215,11 +215,21 @@ def evaluate_events(events):
         and all(summary[k] is False for k in ["stopped", "automatic_open", "audio_opened"])
     ):
         return False
+    return evaluate_native(events[11:30])
+
+
+def evaluate_native(events):
+    if not isinstance(events, list) or len(events) != 19 or any(type(row) is not dict for row in events):
+        return False
+
+    def exact(index, row):
+        return events[index] == row and all(type(events[index].get(k)) is type(v) for k, v in row.items())
+
     common = dict(family="ipv4", protocol="udp", old_epoch=2, new_epoch=3)
     names = ["baseline", "old_open_exchange", "old_closed", "unrelated_closed"]
     names += [f"group_{group}_{kind}" for group in range(57342, 57346) for kind in ["socket", "denied"]]
     names += ["old_root_reply_denied", "old_remains_closed", "unrelated_final"]
-    at = 11
+    at = 0
     for index, name in enumerate(names):
         if not exact(at, dict(event="epoch-check", **common, check=name, ok=True)):
             return False
@@ -242,8 +252,8 @@ def evaluate_events(events):
             ):
                 return False
             at += 1
-    return at == 29 and exact(
-        29,
+    return at == 18 and exact(
+        18,
         dict(
             event="epoch-summary",
             **common,
@@ -255,23 +265,22 @@ def evaluate_events(events):
     )
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("host")
-    parser.add_argument("--ssh-config", type=Path)
-    parser.add_argument("--run-private-corruption-trial", action="store_true", required=True)
-    args = parser.parse_args()
-    if args.host.startswith("-"):
-        parser.error("SSH alias required")
+def run_trial(host, ssh_config, script, evaluate, stem):
+    if not stem.replace("-", "").isalnum() or host.startswith("-"):
+        raise ValueError("Fixed report name and SSH alias required")
     root = Path(__file__).resolve().parents[1]
     ssh = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=20"]
-    if args.ssh_config:
-        ssh += ["-F", str(args.ssh_config)]
-    ssh += [args.host]
+    if ssh_config:
+        ssh += ["-F", str(ssh_config)]
+    ssh += [host]
 
     def remote(command, **kwargs):
         return subprocess.run(ssh + [command], capture_output=True, timeout=180, **kwargs)
 
+    remote(
+        "test ! -e /data/opt/lisa-lab/trial.lock && test ! -e /bkupgrade/data/opt/lisa-station/state && test ! -e /run/lisa-station",
+        check=True,
+    )
     targets, digests = {}, {}
     for key, name in [("COORD", "epoch-mutation-probe"), ("PROBE", "epoch-policy-probe")]:
         data = (root / f"build/{name}.armhf").read_bytes()
@@ -282,35 +291,50 @@ def main():
             raise RuntimeError("emergency helper digest mismatch")
         remote("mv " + target + ".new " + target, check=True)
         targets[key], digests[name] = target, digest
+    native = remote(targets["COORD"] + " --station-selftest", check=True)
+    native_rows = [json.loads(line) for line in native.stdout.decode().splitlines()]
+    if len(native_rows) != 4 or any(row.get("ok") is not True for row in native_rows):
+        raise RuntimeError("Native emergency selftests incomplete")
     identity = "pidof quasar_launcher2 maind alsa-audio-monitord hardvold chronyd unbound; cat /proc/sys/kernel/random/boot_id; sha256sum /etc/init.d/rcS /etc/init.d/S99zdropbear /etc/chrony.conf /etc/unbound/unbound.conf /etc/resolv.conf"
     before = remote(identity, check=True).stdout
     rules = remote("iptables-save; ip6tables-save", check=True).stdout
-    script = trial_script()
     for key, target in targets.items():
         script = script.replace(key, target)
     result = remote("sh -s", input=script.encode())
     after = remote(identity, check=True).stdout
     after_rules = remote("iptables-save; ip6tables-save", check=True).stdout
-    (root / "build/emergency.stdout.private.txt").write_bytes(result.stdout)
+    (root / f"build/{stem}.stdout.private.txt").write_bytes(result.stdout)
     events = [json.loads(line) for line in result.stdout.decode().splitlines()]
     report = dict(
         binary_sha256=digests,
+        native_selftests=native_rows,
         returncode=result.returncode,
         events=events,
         error=result.stderr.decode()[-3000:],
-        protocol_qualified=result.returncode == 0 and evaluate_events(events),
+        protocol_qualified=result.returncode == 0 and evaluate(events),
         stock_identity_and_configs_preserved=before == after,
         firewall_restored=rules_only(rules) == rules_only(after_rules),
         production_mode_changed=False,
         audio_captured=False,
         isolation_verified=False,
     )
-    (root / "build/emergency-qualification.json").write_text(json.dumps(report, indent=2) + "\n")
+    (root / f"build/{stem}-qualification.json").write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps({k: v for k, v in report.items() if k != "events"}, indent=2))
     if not all(
         report[k] for k in ["protocol_qualified", "stock_identity_and_configs_preserved", "firewall_restored"]
     ):
         raise SystemExit("emergency trial incomplete; inspect private report")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("host")
+    parser.add_argument("--ssh-config", type=Path)
+    parser.add_argument("--run-private-corruption-trial", action="store_true", required=True)
+    args = parser.parse_args()
+    if args.host.startswith("-"):
+        parser.error("SSH alias required")
+    run_trial(args.host, args.ssh_config, trial_script(), evaluate_events, "emergency")
 
 
 if __name__ == "__main__":
