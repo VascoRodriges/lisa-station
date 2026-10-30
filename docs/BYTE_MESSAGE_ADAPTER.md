@@ -63,8 +63,9 @@ targets. Qualified ARM SHA256:
 
 ## Next integration boundary
 
-A compatibility binding/factory for the SDK’s observed socket/message calls,
-private protocol framing and broker schemas remain required. The adapter does not
+A [per-child factory binding](UNIX_BUS_FACTORY.md) is now qualified with own
+clients. Actual SDK binding, private protocol framing and broker schemas remain
+required. The adapter does not
 negotiate FD transport, implement D-Bus authentication or authorize real host
 services. Kernel guards, private filesystems, worker ownership and complete queue/
 receiver revocation are separate requirements. The strict no-IP local-helper policy

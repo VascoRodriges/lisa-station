@@ -201,3 +201,9 @@ vectored payloads under the unchanged kernel syscall restrictions. Own mock test
 cover FD identity, ancillary rejection/discard, nonblocking and signal contracts,
 EOF and EPIPE. SDK factory/binding, real bus authorization and production switching
 remain unfinished; no real services were opened by this adapter.
+
+The [per-child factory binding](UNIX_BUS_FACTORY.md) now adapts observed libc
+socket/message calls to a one-shot pool under the unchanged syscall guard. Seven
+own-client cases cover constructor rejection, object identity and concurrent
+claims. Actual SDK/private-bus protocols, receiver revocation and permanent
+switching remain unfinished; the real bus and audio were not opened.

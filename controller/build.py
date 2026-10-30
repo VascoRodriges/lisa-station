@@ -41,6 +41,7 @@ parser.add_argument(
         "platform-worker-probe",
         "platform-sdk-probe",
         "unix-channel-probe",
+        "unix-bus-factory",
         "station-init",
         "boot-runner-probe",
         "boot-dispatch-probe",
@@ -87,6 +88,7 @@ sources = {
     "platform-worker-probe": "platform_worker_probe.c",
     "platform-sdk-probe": "platform_sdk_probe.c",
     "unix-channel-probe": "unix_channel_probe.c",
+    "unix-bus-factory": "unix_bus_factory.c",
     "station-init": "station_init.c",
     "boot-runner-probe": "boot_runner_probe.c",
     "boot-dispatch-probe": "boot_dispatch_probe.c",
@@ -97,7 +99,11 @@ sources = {
     "time-guard-probe": "time_guard_probe.c",
     "time-clock-proof": "time_clock_proof.c",
 }
-output = root / "build" / (args.target + (".so" if args.target == "time-clock-proof" else ".armhf"))
+output = (
+    root
+    / "build"
+    / (args.target + (".so" if args.target in {"time-clock-proof", "unix-bus-factory"} else ".armhf"))
+)
 output.parent.mkdir(exist_ok=True)
 assert subprocess.check_output([args.zig, "version"], text=True).strip() == "0.14.1"
 subprocess.run(
@@ -112,9 +118,14 @@ subprocess.run(
         "-Wextra",
         "-Werror",
         str(root / "controller" / sources[args.target]),
-        *(["-pthread"] if args.target in {"platform-worker-probe", "platform-sdk-probe"} else []),
+        *(
+            ["-pthread"]
+            if args.target
+            in {"platform-worker-probe", "platform-sdk-probe", "unix-bus-factory", "unix-channel-probe"}
+            else []
+        ),
         *(["-ldl"] if args.target in {"diagnostics-guard-probe", "time-clock-proof"} else []),
-        *(["-shared", "-fPIC"] if args.target == "time-clock-proof" else []),
+        *(["-shared", "-fPIC"] if args.target in {"time-clock-proof", "unix-bus-factory"} else []),
         "-o",
         str(output),
     ],
