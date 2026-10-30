@@ -393,3 +393,60 @@ def test_driver_error_audit_bounds_actual_records(count):
     rows = driver_error_evidence()
     rows[12]["records"] = count
     assert evaluate_events(rows, error_audit=True)
+
+
+def owned_service_evidence():
+    rows = dual_evidence()
+    rows[0]["checks"] = rows[11]["checks"] = 34
+    for index in [5, 10]:
+        rows[index].update(service_owner_observed=True, service_owner_retired=True, owner_queries=3, queries=20)
+    return rows
+
+
+def test_owned_service_requires_new_controls_and_observed_owner_retirement():
+    assert evaluate_events(owned_service_evidence(), owned_service=True)
+    assert not evaluate_events(dual_evidence(), owned_service=True)
+    assert not evaluate_events(owned_service_evidence(), dual_channels=True)
+    assert not evaluate_events(owned_service_evidence(), owned_service=True, error_audit=True)
+    with pytest.raises(ValueError):
+        diagnostic_script(owned_service=True, dual_channels=True)
+    script = diagnostic_script(owned_service=True)
+    assert "PROBE --run-sdk-owner " in script
+    assert script.count("/root[012]-channel[01]-relay.child") == 2
+    assert script.count("for channel in 0 1; do") == 2
+    assert "rm -r" not in script
+
+
+@pytest.mark.parametrize("index,key,value", [
+    (0, "checks", 29), (11, "checks", 33), (0, "checks", True),
+    (5, "service_owner_observed", False), (10, "service_owner_retired", False),
+    (5, "service_owner_observed", 1), (10, "service_owner_retired", 1),
+    (5, "owner_queries", 0), (5, "owner_queries", 1), (10, "owner_queries", 16),
+    (5, "owner_queries", True), (10, "owner_queries", 2.0), (10, "queries", 4),
+    (3, "auth_verified", False), (8, "boundary_ok", False),
+    (10, "group_finished", False), (10, "sdk_subscription_removed", False),
+])
+def test_owned_service_rejects_unproven_or_untyped_owner_evidence(index, key, value):
+    rows = owned_service_evidence()
+    rows[index][key] = value
+    assert not evaluate_events(rows, owned_service=True)
+
+
+@pytest.mark.parametrize("index", range(16))
+def test_owned_service_requires_all_ordered_unique_typed_events(index):
+    rows = owned_service_evidence()
+    del rows[index]
+    assert not evaluate_events(rows, owned_service=True)
+    rows = owned_service_evidence()
+    rows.insert(index, deepcopy(rows[index]))
+    assert not evaluate_events(rows, owned_service=True)
+    rows = owned_service_evidence()
+    rows[index]["unexpected"] = True
+    assert not evaluate_events(rows, owned_service=True)
+
+
+@pytest.mark.parametrize("count", [2, 3, 14, 15])
+def test_owned_service_bounds_owner_queries_within_shared_budget(count):
+    rows = owned_service_evidence()
+    rows[10]["owner_queries"] = count
+    assert evaluate_events(rows, owned_service=True)

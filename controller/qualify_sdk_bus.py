@@ -40,10 +40,10 @@ def allocation_diagnostic(data, *, truncated=False):
     return dict(kind="unobserved")
 
 
-def diagnostic_script(*, empty_bluez=False, synthetic_adapter=False, dual_channels=False, error_audit=False):
-    if sum((bool(empty_bluez), bool(synthetic_adapter), bool(dual_channels), bool(error_audit))) > 1:
+def diagnostic_script(*, empty_bluez=False, synthetic_adapter=False, dual_channels=False, error_audit=False, owned_service=False):
+    if sum((bool(empty_bluez), bool(synthetic_adapter), bool(dual_channels), bool(error_audit), bool(owned_service))) > 1:
         raise ValueError("choose one explicit service fixture")
-    mode = "--run-sdk-error-audit" if error_audit else "--run-sdk-two" if dual_channels else "--run-sdk-adapter" if synthetic_adapter else "--run-sdk-bluez" if empty_bluez else "--run-sdk"
+    mode = "--run-sdk-owner" if owned_service else "--run-sdk-error-audit" if error_audit else "--run-sdk-two" if dual_channels else "--run-sdk-adapter" if synthetic_adapter else "--run-sdk-bluez" if empty_bluez else "--run-sdk"
     script = BUS_SCRIPT.replace("PROBE --run ", f"PROBE {mode} ")
     # The same owned-PID watchdog also watches the SDK family leader. Its
     # descendants inherit PDEATH/ptrace EXITKILL; no stock process is targeted.
@@ -64,7 +64,7 @@ def diagnostic_script(*, empty_bluez=False, synthetic_adapter=False, dual_channe
             ]
         )
         script = script.replace(before, extra + "\n" + before)
-    if dual_channels or error_audit:
+    if dual_channels or error_audit or owned_service:
         for prefix in ["STATE", "state"]:
             before = f'"${prefix}"/root[012]-relay.child'
             script = script.replace(before, before + f' "${prefix}"/root[012]-channel[01]-relay.child')
@@ -82,10 +82,26 @@ def diagnostic_script(*, empty_bluez=False, synthetic_adapter=False, dual_channe
     )
 
 
-def evaluate_events(events, *, empty_bluez=False, synthetic_adapter=False, dual_channels=False, error_audit=False):
+def evaluate_events(events, *, empty_bluez=False, synthetic_adapter=False, dual_channels=False, error_audit=False, owned_service=False):
     """Require SDK boundary, real EXTERNAL authentication and complete teardown."""
-    if sum((bool(empty_bluez), bool(synthetic_adapter), bool(dual_channels), bool(error_audit))) > 1:
+    if sum((bool(empty_bluez), bool(synthetic_adapter), bool(dual_channels), bool(error_audit), bool(owned_service))) > 1:
         return False
+    if owned_service:
+        if type(events) is not list or len(events) != 16 or any(type(e) is not dict for e in events):
+            return False
+        if any(type(events[i].get("checks")) is not int or events[i]["checks"] != 34 for i in [0, 11]):
+            return False
+        normalized = [dict(e) for e in events]
+        normalized[0]["checks"] = normalized[11]["checks"] = 29
+        for index in [5, 10]:
+            event = normalized[index]
+            if (event.get("service_owner_observed") is not True or event.get("service_owner_retired") is not True
+                or type(event.get("owner_queries")) is not int or not 2 <= event["owner_queries"] <= 15
+                or type(event.get("queries")) is not int or event["owner_queries"] + 2 > event["queries"]):
+                return False
+            for key in ["service_owner_observed", "service_owner_retired", "owner_queries"]:
+                del event[key]
+        return evaluate_events(normalized, dual_channels=True)
     if error_audit:
         if type(events) is not list or len(events) != 18 or any(type(e) is not dict for e in events):
             return False
@@ -230,6 +246,7 @@ def main():
     service.add_argument("--synthetic-adapter", action="store_true", help="One synthetic offline Adapter1; no real Bluetooth hardware")
     service.add_argument("--dual-channels", action="store_true", help="Two independent SDK streams after a separate policy epoch")
     service.add_argument("--error-audit", action="store_true", help="Private daemon denial records; no bus-policy changes")
+    service.add_argument("--owned-service", action="store_true", help="Exact SDK service ownership with observed acquisition and retirement")
     args = parser.parse_args()
     if args.host.startswith("-"):
         parser.error("SSH alias required")
@@ -261,11 +278,11 @@ def main():
     identity = "pidof dbus-daemon quasar_launcher2 maind alsa-audio-monitord hardvold chronyd unbound; cat /proc/sys/kernel/random/boot_id; sha256sum /etc/init.d/rcS /etc/init.d/S99zdropbear /etc/chrony.conf /etc/unbound/unbound.conf /etc/resolv.conf"
     before = remote(identity, check=True).stdout
     firewall = remote("iptables-save; ip6tables-save", check=True).stdout
-    script = diagnostic_script(empty_bluez=args.empty_bluez, synthetic_adapter=args.synthetic_adapter, dual_channels=args.dual_channels, error_audit=args.error_audit).replace("PROBE", resolved[0]).replace("FACTORY", resolved[1]).replace("CLIENT_LIBRARY", resolved[2])
+    script = diagnostic_script(empty_bluez=args.empty_bluez, synthetic_adapter=args.synthetic_adapter, dual_channels=args.dual_channels, error_audit=args.error_audit, owned_service=args.owned_service).replace("PROBE", resolved[0]).replace("FACTORY", resolved[1]).replace("CLIENT_LIBRARY", resolved[2])
     result = remote("sh -s", input=script.encode())
     after = remote(identity, check=True).stdout
     after_firewall = remote("iptables-save; ip6tables-save", check=True).stdout
-    report_name = "sdk-driver-bus" if args.error_audit else "sdk-two-bus" if args.dual_channels else "sdk-adapter-bus" if args.synthetic_adapter else "sdk-bluez-bus" if args.empty_bluez else "sdk-bus"
+    report_name = "sdk-owner-bus" if args.owned_service else "sdk-driver-bus" if args.error_audit else "sdk-two-bus" if args.dual_channels else "sdk-adapter-bus" if args.synthetic_adapter else "sdk-bluez-bus" if args.empty_bluez else "sdk-bus"
     (root / f"build/{report_name}.stdout.private.txt").write_bytes(result.stdout)
     (root / f"build/{report_name}.stderr.private.txt").write_bytes(result.stderr)
     events = [json.loads(line) for line in result.stdout.decode().splitlines()]
@@ -280,7 +297,7 @@ def main():
                 name = f"sdk{role}-{suffix}.private.txt"
                 if suffix == "driver-errors":
                     name = f"sdk{role}-{suffix}.private.bin"
-                local_name = "driver-" + name if args.error_audit else "two-" + name if args.dual_channels else "adapter-" + name if args.synthetic_adapter else "bluez-" + name if args.empty_bluez else name
+                local_name = "owner-" + name if args.owned_service else "driver-" + name if args.error_audit else "two-" + name if args.dual_channels else "adapter-" + name if args.synthetic_adapter else "bluez-" + name if args.empty_bluez else name
                 saved = remote("test ! -L " + state + "/" + name + " && head -c 65536 " + state + "/" + name)
                 if saved.returncode == 0:
                     (root / "build" / local_name).write_bytes(saved.stdout)
@@ -293,14 +310,14 @@ def main():
     report = dict(
         binary_sha256=digests[0], binding_sha256=digests[1], client_binding_sha256=digests[2],
         returncode=result.returncode, events=events,
-        qualified=result.returncode == 0 and evaluate_events(events, empty_bluez=args.empty_bluez, synthetic_adapter=args.synthetic_adapter, dual_channels=args.dual_channels, error_audit=args.error_audit),
+        qualified=result.returncode == 0 and evaluate_events(events, empty_bluez=args.empty_bluez, synthetic_adapter=args.synthetic_adapter, dual_channels=args.dual_channels, error_audit=args.error_audit, owned_service=args.owned_service),
         stock_identity_and_configs_preserved=before == after,
         firewall_unchanged=rules_only(firewall) == rules_only(after_firewall),
         audio_captured=False, sdk_executed=any(e.get("event") == "sdk-bus-diagnostic" and e.get("role") == "platform" and e.get("exec_verified") is True for e in events),
         host_bus_forwarded=False, production_mode_changed=False,
         isolation_verified=False, functionality_verified=False,
     )
-    prefix = "driver-" if args.error_audit else "two-" if args.dual_channels else "adapter-" if args.synthetic_adapter else "bluez-" if args.empty_bluez else ""
+    prefix = "owner-" if args.owned_service else "driver-" if args.error_audit else "two-" if args.dual_channels else "adapter-" if args.synthetic_adapter else "bluez-" if args.empty_bluez else ""
     log = root / "build" / f"{prefix}sdk1-stderr.private.txt"
     diagnostic = next((event for event in events if event.get("event") == "sdk-bus-diagnostic" and event.get("role") == "platform"), {})
     report["allocation_diagnostic"] = allocation_diagnostic(

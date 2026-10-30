@@ -29,6 +29,7 @@
 #include "private_adapter_objects.h"
 #include "sdk_name_ledger.h"
 #include "driver_denial_record.h"
+#include "sdk_service_owner.h"
 #ifndef __arm__
 #error This namespace diagnostic requires the reviewed ARM device ABI
 #endif
@@ -36,6 +37,7 @@ static unsigned checks,failures;
 static int sdk_bluez;
 static int sdk_dual;
 static int sdk_errors;
+static int sdk_owner;
 static void check(int ok){++checks;if(!ok){++failures;fprintf(stderr,"private bus check %u errno %d\n",checks,errno);}}
 static int full(int fd,void *buffer,size_t size){
     uint64_t end=guardian_milliseconds()+3000;size_t used=0;
@@ -66,12 +68,13 @@ static const char configuration_policy[]=
     "<allow send_destination=\"org.freedesktop.DBus\" send_interface=\"org.freedesktop.DBus\" send_member=\"Hello\"/>"
     "<allow send_destination=\"org.freedesktop.DBus\" send_interface=\"org.freedesktop.DBus\" send_member=\"GetId\"/>";
 static int bus_configuration(const char *root,int subscriptions){
-    char text[4096];int size=snprintf(text,sizeof(text),"%s<limit name=\"max_names_per_connection\">%u</limit><limit name=\"max_match_rules_per_connection\">%u</limit>%s%s%s%s%s%s</policy></busconfig>\n",configuration_prefix,
+    char text[4096];int size=snprintf(text,sizeof(text),"%s<limit name=\"max_names_per_connection\">%u</limit><limit name=\"max_match_rules_per_connection\">%u</limit>%s%s%s%s%s%s%s</policy></busconfig>\n",configuration_prefix,
         subscriptions>=3?2:1,subscriptions?MATCH_RULES:1,configuration_policy,
         subscriptions?"<allow send_destination=\"org.freedesktop.DBus\" send_interface=\"org.freedesktop.DBus\" send_member=\"AddMatch\"/>":"",
         subscriptions?"<allow send_destination=\"org.freedesktop.DBus\" send_interface=\"org.freedesktop.DBus.Debug.Stats\" send_member=\"GetAllMatchRules\"/>":"",
         subscriptions==2||subscriptions==4?"<allow send_type=\"signal\" send_interface=\"org.example.LisaProbe\" send_member=\"UnexpectedPeer\" send_path=\"/org/example/LisaProbe\"/>":"",
         "<deny receive_sender=\"*\"/><allow receive_sender=\"org.freedesktop.DBus\"/>",
+        sdk_owner&&subscriptions>=3?"<allow own=\"" SDK_SERVICE_NAME "\"/><allow send_destination=\"org.freedesktop.DBus\" send_interface=\"org.freedesktop.DBus\" send_member=\"GetNameOwner\"/>":"",
         subscriptions>=3?"<allow own=\"org.bluez\"/><allow send_destination=\"org.freedesktop.DBus\" send_interface=\"org.freedesktop.DBus\" send_member=\"RequestName\"/>"
         "<allow send_destination=\"org.bluez\" send_type=\"method_call\" send_path=\"/\" send_interface=\"org.freedesktop.DBus.ObjectManager\" send_member=\"GetManagedObjects\"/>"
         "<allow receive_type=\"method_call\" receive_path=\"/\" receive_interface=\"org.freedesktop.DBus.ObjectManager\" receive_member=\"GetManagedObjects\"/>"
@@ -255,7 +258,7 @@ static int connect_bus(const char *path){
  * inspect SDK buffers, forward a host bus, or authorize production messages. */
 struct policy_frame {
     unsigned char bytes[8192];size_t start,payload;unsigned type,reply;
-    char path[128],interface[128],member[96],sender[96],error[128],signature[16];
+    char path[128],interface[128],member[96],sender[96],destination[MATCH_NAME],error[128],signature[16];
 };
 static uint64_t policy_io_end;static int policy_read_vectors;
 static int policy_io(int fd,void *buffer,size_t size,int sending){
@@ -297,7 +300,7 @@ static int policy_frame_read(int fd,struct policy_frame *frame){
                 case 2:target=frame->interface;capacity=sizeof(frame->interface);break;
                 case 3:target=frame->member;capacity=sizeof(frame->member);break;
                 case 4:target=frame->error;capacity=sizeof(frame->error);break;
-                case 6:break;
+                case 6:target=frame->destination;capacity=sizeof(frame->destination);break;
                 case 7:target=frame->sender;capacity=sizeof(frame->sender);break;
                 case 8:target=frame->signature;capacity=sizeof(frame->signature);break;
                 default:return -1;
@@ -338,6 +341,29 @@ static int policy_request(int fd,const char *interface,const char *member,unsign
 static int policy_call(int fd,const char *interface,const char *member,unsigned serial,unsigned body,const char *argument,const char *error){
     return policy_request(fd,interface,member,serial,body,argument)||policy_reply(fd,serial,error)?-1:0;
 }
+static int policy_primary_owner(int fd,unsigned serial){
+    if(policy_request(fd,"org.freedesktop.DBus","RequestName",serial,4,SDK_SERVICE_NAME))return -1;
+    for(unsigned i=0;i<12;++i){struct policy_frame frame;
+        if(policy_frame_read(fd,&frame)||strcmp(frame.sender,"org.freedesktop.DBus"))return -1;
+        if(frame.type==4)continue;
+        return frame.type==2&&frame.reply==serial&&!strcmp(frame.signature,"u")&&frame.payload==4&&u32(frame.bytes+frame.start)==1?0:-1;
+    }return -1;
+}
+/* One fixed reviewed service; result 1 has a unique owner, 0 is explicit
+ * NameHasNoOwner, -1 is any other error. Never interpret error text as rights. */
+static int policy_owner_lookup(int fd,unsigned serial,const char *receiver,char owner[MATCH_NAME]){
+    memset(owner,0,MATCH_NAME);
+    if(policy_request(fd,"org.freedesktop.DBus","GetNameOwner",serial,1,SDK_SERVICE_NAME))return -1;
+    for(unsigned i=0;i<12;++i){struct policy_frame frame;
+        if(policy_frame_read(fd,&frame)||strcmp(frame.sender,"org.freedesktop.DBus"))return -1;
+        if(frame.type==4)continue;
+        struct private_error_text text;
+        if(frame.reply!=serial||strcmp(frame.destination,receiver)||private_error_decode(frame.signature,frame.bytes+frame.start,frame.payload,&text))return -1;
+        if(frame.type==2&&text.size<MATCH_NAME&&match_name(text.text)){memcpy(owner,text.text,text.size+1);return 1;}
+        if(frame.type==3&&!strcmp(frame.error,"org.freedesktop.DBus.Error.NameHasNoOwner")&&text.size)return 0;
+        return -1;
+    }return -1;
+}
 static int policy_peer_signal(int fd){
     unsigned char bytes[512]={'l',4,0,1};put32(bytes+8,90);
     size_t used=string_field(bytes,16,1,'o',"/org/example/LisaProbe");
@@ -345,20 +371,32 @@ static int policy_peer_signal(int fd){
     put32(bytes+12,(uint32_t)(used-16));used=(used+7)&~(size_t)7;
     return store_write_all(fd,(const char *)bytes,used);
 }
-static int policy_driver_transition(int fd,const char *name,int lost){
+static int policy_driver_transition_read(int fd,char strings[3][96]){
     for(unsigned i=0;i<12;++i){struct policy_frame frame;if(policy_frame_read(fd,&frame)||frame.type!=4||strcmp(frame.sender,"org.freedesktop.DBus"))return -1;
         if(strcmp(frame.member,"NameOwnerChanged"))return -1;
         if(strcmp(frame.interface,"org.freedesktop.DBus")||strcmp(frame.path,"/org/freedesktop/DBus")||strcmp(frame.signature,"sss"))return -1;
-        char strings[3][96];size_t cursor=frame.start;
+        size_t cursor=frame.start;
         for(unsigned j=0;j<3;++j){cursor=(cursor+3)&~(size_t)3;if(cursor+4>frame.start+frame.payload)return -1;
             size_t size=u32(frame.bytes+cursor);cursor+=4;
-            if(size>=sizeof(strings[j])||cursor+size>=frame.start+frame.payload||frame.bytes[cursor+size]||memchr(frame.bytes+cursor,0,size))return -1;
+            if(size>=96||cursor+size>=frame.start+frame.payload||frame.bytes[cursor+size]||memchr(frame.bytes+cursor,0,size))return -1;
             memcpy(strings[j],frame.bytes+cursor,size+1);cursor+=size+1;}
         if(cursor!=frame.start+frame.payload)return -1;
-        return !strcmp(strings[0],name)&&(lost?(!strcmp(strings[1],name)&&!strings[2][0]):(!strings[1][0]&&!strcmp(strings[2],name)))?0:-1;
+        return 0;
     }return -1;
 }
+static int policy_driver_transition_owner(int fd,const char *name,const char *owner,int lost){
+    char strings[3][96];if(policy_driver_transition_read(fd,strings))return -1;
+    return !strcmp(strings[0],name)&&(lost?(!strcmp(strings[1],owner)&&!strings[2][0]):(!strings[1][0]&&!strcmp(strings[2],owner)))?0:-1;
+}
+static int policy_driver_transition(int fd,const char *name,int lost){return policy_driver_transition_owner(fd,name,name,lost);}
 static int policy_driver_change(int fd,const char *name){return policy_driver_transition(fd,name,0);}
+static int policy_driver_owner_pair_lost(int fd,const char *unique){
+    unsigned seen=0;
+    for(unsigned i=0;i<2;++i){char strings[3][96];if(policy_driver_transition_read(fd,strings)||strcmp(strings[1],unique)||strings[2][0])return -1;
+        unsigned slot=!strcmp(strings[0],unique)?1:!strcmp(strings[0],SDK_SERVICE_NAME)?2:0;
+        if(!slot||(seen&slot))return -1;seen|=slot;
+    }return seen==3?0:-1;
+}
 struct sdk_empty_provider {
     int fd;unsigned serial,calls,signals,owned,closed;uint64_t spent;
     char name[MATCH_NAME];struct stat identity;
@@ -422,6 +460,7 @@ struct sdk_match_observer {
     char name[MATCH_NAME];
     struct stat identity;struct private_match_entry baseline,peak,provider;
     struct sdk_name_ledger names;
+    struct sdk_service_owner service;unsigned owner_queries;
 };
 static const char *const own_match_rules[]={"type='signal'","type='signal',interface='org.example.LisaObserver'"};
 static const char own_second_rule[]="type='signal',interface='org.example.LisaSecond'";
@@ -452,6 +491,17 @@ static int observer_query(struct sdk_match_observer *observer,struct private_mat
     policy_io_end=0;uint64_t finish=now_ms();if(!finish||finish<start)return -1;
     observer->spent+=finish-start;return good?0:-1;
 }
+static int observer_owner_query(struct sdk_match_observer *observer,int retire){
+    struct stat actual;
+    if(observer->fd<3||policy_io_end||observer->queries>=40||observer->spent>=1000||observer->owner_queries>=(retire?15u:14u)||
+        fstat(observer->fd,&actual)||actual.st_dev!=observer->identity.st_dev||actual.st_ino!=observer->identity.st_ino)return -1;
+    uint64_t start=now_ms(),left=1000-observer->spent;if(!start)return -1;
+    policy_io_end=start+(left<50?left:50);++observer->queries;++observer->owner_queries;
+    char owner[MATCH_NAME];int found=policy_owner_lookup(observer->fd,++observer->serial,observer->name,owner),result=-1;
+    if(found>=0)result=retire?sdk_owner_retire(&observer->service,&observer->names,found==0):sdk_owner_observe(&observer->service,&observer->names,found?owner:NULL);
+    policy_io_end=0;uint64_t finish=now_ms();if(!finish||finish<start)return -1;
+    observer->spent+=finish-start;return result;
+}
 static int observer_admit(int fd,const char *name,struct sdk_match_observer *observer,const struct sdk_empty_provider *provider){
     memset(observer,0,sizeof(*observer));observer->fd=fd;observer->serial=100;
     if(fd<3||strlen(name)>=sizeof(observer->name)||!match_name(name)||fstat(fd,&observer->identity)||!S_ISSOCK(observer->identity.st_mode))return -1;
@@ -478,6 +528,7 @@ static int observer_snapshot(struct sdk_match_observer *observer,unsigned source
     if(sdk_dual){
         if(sdk_ledger_observe(&observer->names,&snapshot,&observer->baseline,&observer->provider))return -1;
         observer->captured=0;for(unsigned i=0;i<observer->names.count;++i)observer->captured+=observer->names.peak[i].rules;
+        if(sdk_owner&&observer->names.count==2&&!observer->service.observed&&observer_owner_query(observer,0))return -1;
         return 0;
     }
     const struct private_match_entry *self=private_match_find(&snapshot,observer->name);
@@ -498,6 +549,7 @@ static int observer_after_sdk(struct sdk_match_observer *observer,int policy_onl
         if(!self||self->rules!=observer->baseline.rules||!match_includes(self,&observer->baseline))return -1;
         if(snapshot.clients==1&&!private_match_find(&snapshot,observer->peak.name)){
             if(sdk_dual&&sdk_ledger_finish(&observer->names,&snapshot,&observer->baseline))return -1;
+            if(sdk_owner&&!policy_only&&observer_owner_query(observer,1))return -1;
             observer->post_absent=1;return 0;
         }
         struct timespec pause={0,5000000};nanosleep(&pause,NULL);
@@ -559,12 +611,19 @@ static int subscription_policy(const char *endpoint,struct sdk_match_observer *o
         {"org.freedesktop.DBus","GetNameOwner",1,"org.example.LisaDenied"},
         {"org.example.LisaDenied","Hello",0,NULL}};
     for(unsigned i=0;i<sizeof(forbidden)/sizeof(forbidden[0]);++i)
-        POLICY(!policy_call(connections[0],forbidden[i].interface,forbidden[i].member,7+i,forbidden[i].body,forbidden[i].argument,denied));
+        POLICY(!policy_call(connections[0],forbidden[i].interface,forbidden[i].member,7+i,forbidden[i].body,forbidden[i].argument,
+            sdk_owner&&!strcmp(forbidden[i].member,"GetNameOwner")?"org.freedesktop.DBus.Error.NameHasNoOwner":denied));
     connections[1]=connect_bus(endpoint);POLICY(connections[1]>=3);
     POLICY(!auth(connections[1],guid)&&!text_send(connections[1],"BEGIN\r\n")&&!method(connections[1],"Hello",1,0,name,sizeof(name)));
     POLICY(!policy_driver_change(connections[0],name));
     POLICY(!policy_peer_signal(connections[1])&&!method(connections[1],"GetId",2,0,body,sizeof(body)));
     struct pollfd receiver={connections[0],POLLIN,0};POLICY(poll(&receiver,1,300)==0);
+    if(sdk_owner){char owner[MATCH_NAME];
+        POLICY(!policy_call(connections[1],driver,"RequestName",20,4,SDK_SERVICE_NAME ".Other",denied));
+        POLICY(!policy_call(connections[1],driver,"RequestName",21,4,SDK_SERVICE_NAME "Other",denied));
+        POLICY(!policy_primary_owner(connections[1],22));
+        POLICY(policy_owner_lookup(connections[1],23,name,owner)==1&&!strcmp(owner,name));
+    }
     int closed=1;
     if(provider){if(provider_admit(connections[0],first_name,provider))closed=0;else{
         connections[0]=-1;
@@ -578,9 +637,12 @@ static int subscription_policy(const char *endpoint,struct sdk_match_observer *o
     connections[2]=connect_bus(endpoint);POLICY(connections[2]>=3);
     POLICY(!auth(connections[2],guid)&&!text_send(connections[2],"BEGIN\r\n")&&!method(connections[2],"Hello",1,0,name,sizeof(name)));
     POLICY(!policy_call(connections[2],driver,"AddMatch",2,1,"type='signal',eavesdrop='true'",NULL));
-    POLICY(!observer_admit(connections[2],name,observer,provider));connections[2]=-1;good=1;subscription_ok=1;
+    POLICY(!observer_admit(connections[2],name,observer,provider));connections[2]=-1;
+    if(sdk_owner){char owner[MATCH_NAME];POLICY(policy_owner_lookup(observer->fd,++observer->serial,observer->name,owner)==0);}
+    good=1;subscription_ok=1;
 done:
     for(unsigned i=0;i<3;++i)if(connections[i]>=0)close(connections[i]);
+    if(!good&&connections[2]<0&&observer->fd>=3)observer_close(observer);
     if(!good)observer->fd=-1;
     #undef POLICY
     return good?0:-1;
@@ -687,7 +749,7 @@ static int sdk_binding_mapped(pid_t child,void *opaque){
 static _Atomic int sdk_control_ready;
 static void *sdk_control_thread(void *unused){(void)unused;atomic_fetch_add(&sdk_control_ready,1);
     for(;;){struct timespec pause={0,1000000};nanosleep(&pause,NULL);}return NULL;}
-static int sdk_bus_control(int source,pid_t parent,const char *provider,int adapter,int dual,int errors){
+static int sdk_bus_control(int source,pid_t parent,const char *provider,int adapter,int dual,int errors,int owner){
     if(!client_equal("/etc/lisa-platform-storage","LISA_PLATFORM_STORAGE_V1\n")||getppid()!=parent||
         prctl(PR_GET_NO_NEW_PRIVS,0,0,0,0)!=1||!unix_byte_channel_valid(source,parent))return 9;
     errno=0;int missing=open("/lisa-sdk-missing-metadata",O_RDONLY|O_NOFOLLOW|O_CLOEXEC);if(missing>=0||errno!=ENOENT)return 9;
@@ -716,8 +778,9 @@ static int sdk_bus_control(int source,pid_t parent,const char *provider,int adap
             method(next,"Hello",1,0,next_name,sizeof(next_name))||method(next,"GetId",2,0,body,sizeof(body))||
             policy_call(next,"org.freedesktop.DBus","AddMatch",3,1,own_second_rule,NULL)||
             (errors&&policy_call(next,"org.freedesktop.DBus","RequestName",4,4,"org.example.LisaDenied","org.freedesktop.DBus.Error.AccessDenied"))||
-            policy_driver_change(fd,next_name)||close(next)||
-            policy_driver_transition(fd,next_name,1)||method(fd,"GetId",6,0,body,sizeof(body)))return 9;
+            (owner&&(policy_primary_owner(next,4)||policy_call(next,"org.freedesktop.DBus","RequestName",5,4,SDK_SERVICE_NAME ".Other","org.freedesktop.DBus.Error.AccessDenied")))||
+            policy_driver_change(fd,next_name)||(owner&&policy_driver_transition_owner(fd,SDK_SERVICE_NAME,next_name,0))||close(next)||
+            (owner?policy_driver_owner_pair_lost(fd,next_name):policy_driver_transition(fd,next_name,1))||method(fd,"GetId",6,0,body,sizeof(body)))return 9;
     }
     if(close(fd))return 9;
     int marker=open("/data/quasar/own-bus-gate-proof",O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);
@@ -1037,7 +1100,7 @@ static int run_sdk(const char *base,const char *root,const char *own,const char 
         if(ptrace(PTRACE_TRACEME,0,NULL,NULL)||vendor_identity_prepare(57342)||platform_sdk_guard(parent)||unix_byte_channel_guard(channel,parent))_exit(85);
         if(raise(SIGSTOP))_exit(86);
         if(role)execl("/system/vendor/quasar/maind","maind","--platformd",(char *)NULL);
-        else if(provider)execl("/system/vendor/quasar/maind","sdk-bus-control",sdk_errors?"--sdk-error-control":sdk_dual?"--sdk-two-control":sdk_bluez==2?"--sdk-adapter-control":"--sdk-bluez-control",primary_text,parent_text,provider->name,(char *)NULL);
+        else if(provider)execl("/system/vendor/quasar/maind","sdk-bus-control",sdk_owner?"--sdk-owner-control":sdk_errors?"--sdk-error-control":sdk_dual?"--sdk-two-control":sdk_bluez==2?"--sdk-adapter-control":"--sdk-bluez-control",primary_text,parent_text,provider->name,(char *)NULL);
         else execl("/system/vendor/quasar/maind","sdk-bus-control","--sdk-control",fd_text,parent_text,(char *)NULL);
         _exit(87);
     }
@@ -1198,6 +1261,8 @@ static int sdk_bus_epoch(const char *base,const char *own,const char *server_bin
             printf("{\"event\":\"%s\",\"role\":\"%s\",\"snapshot_captured\":%s,\"own_fixture_match\":%s,\"sdk_subscription_removed\":%s,\"observer_closed\":%s,\"queries\":%u,\"peak_rules\":%u,\"private_metadata_only\":true",
                 sdk_dual?"sdk-group-observer":"sdk-match-observer",role?"platform":"own-elf",observer.captured?"true":"false",fixture_match?"true":"false",observer.post_absent?"true":"false",observer.closed?"true":"false",observer.queries,observer.captured);
             if(sdk_dual)printf(",\"sdk_names\":%u,\"active_names\":%u,\"group_finished\":%s",observer.names.count,observer.names.active,observer.names.finished?"true":"false");
+            if(sdk_owner){if(!observer.service.observed||!observer.service.retired)good=0;
+                printf(",\"service_owner_observed\":%s,\"service_owner_retired\":%s,\"owner_queries\":%u",observer.service.observed?"true":"false",observer.service.retired?"true":"false",observer.owner_queries);}
             printf("}\n");fflush(stdout);
         }
         if(kill(bus,SIGTERM))good=0;
@@ -1225,7 +1290,7 @@ static int sdk_bus_coordinator(const char *base,const char *own,const char *serv
     pid_t parent=getppid();if(parent<=1||prctl(PR_SET_PDEATHSIG,SIGKILL)||getppid()!=parent)return 2;alarm(40);
     if(sdk_dual&&sdk_bus_epoch(base,own,server,client,0,1))return 2;
     for(unsigned role=0;role<2;++role)if(sdk_bus_epoch(base,own,server,client,role,0))return 2;
-    if(!subscription_ok||!subscription_observer_closed||subscription_checks!=(sdk_bluez?29u:26u))return 2;
+    if(!subscription_ok||!subscription_observer_closed||subscription_checks!=(sdk_owner?34u:sdk_bluez?29u:26u))return 2;
     printf("{\"event\":\"sdk-subscription-policy\",\"checks\":%u,\"failures\":0,\"driver_signal_received\":true,\"peer_signal_blocked\":true,\"rule_limit\":4,\"connections_closed\":true,\"own_controls_only\":true}\n",subscription_checks);
     printf("{\"selftest\":\"sdk-private-bus\",\"ok\":true,\"sdk_executed\":true,\"audio_opened\":false,\"functionality_verified\":false}\n");fflush(stdout);return 0;
 }
@@ -1313,12 +1378,12 @@ static int coordinator(const char *base,const char *executable,const char *bindi
 }
 int main(int argc,char **argv){
     if(argc==2&&!strcmp(argv[1],"--actor"))return own_actor();
-    if((argc==4&&!strcmp(argv[1],"--sdk-control"))||(argc==5&&(!strcmp(argv[1],"--sdk-bluez-control")||!strcmp(argv[1],"--sdk-adapter-control")||!strcmp(argv[1],"--sdk-two-control")||!strcmp(argv[1],"--sdk-error-control")))){
+    if((argc==4&&!strcmp(argv[1],"--sdk-control"))||(argc==5&&(!strcmp(argv[1],"--sdk-bluez-control")||!strcmp(argv[1],"--sdk-adapter-control")||!strcmp(argv[1],"--sdk-two-control")||!strcmp(argv[1],"--sdk-error-control")||!strcmp(argv[1],"--sdk-owner-control")))){
         long values[2];for(unsigned i=0;i<2;++i){char *end;values[i]=strtol(argv[i+2],&end,10);if(*end||values[i]<3||values[i]>INT_MAX)return 2;}
         if(getppid()!=values[1])return 2;
         if(argc==5&&!empty_objects_name_size(argv[4]))return 2;
-        int errors=!strcmp(argv[1],"--sdk-error-control"),dual=errors||!strcmp(argv[1],"--sdk-two-control");
-        return sdk_bus_control((int)values[0],(pid_t)values[1],argc==5?argv[4]:NULL,dual||!strcmp(argv[1],"--sdk-adapter-control"),dual,errors);
+        int errors=!strcmp(argv[1],"--sdk-error-control"),owner=!strcmp(argv[1],"--sdk-owner-control"),dual=owner||errors||!strcmp(argv[1],"--sdk-two-control");
+        return sdk_bus_control((int)values[0],(pid_t)values[1],argc==5?argv[4]:NULL,dual||!strcmp(argv[1],"--sdk-adapter-control"),dual,errors,owner);
     }
     if(argc==7&&!strcmp(argv[1],"--client-actor")){
         long values[5];for(unsigned i=0;i<5;++i){char *end;values[i]=strtol(argv[i+2],&end,10);if(*end||values[i]<(i==4?1:3)||values[i]>INT_MAX)return 2;}
@@ -1330,8 +1395,8 @@ int main(int argc,char **argv){
         if(values[0]==values[1]||values[0]==values[2]||values[1]==values[2]||getppid()!=values[3])return 2;
         return relay_actor((int)values[0],(int)values[1],(int)values[2],(pid_t)values[3]);
     }
-    if(argc!=5||(strcmp(argv[1],"--run")&&strcmp(argv[1],"--run-sdk")&&strcmp(argv[1],"--run-sdk-bluez")&&strcmp(argv[1],"--run-sdk-adapter")&&strcmp(argv[1],"--run-sdk-two")&&strcmp(argv[1],"--run-sdk-error-audit"))||getuid()||geteuid()||getgid()||getegid())return 2;
-    sdk_errors=!strcmp(argv[1],"--run-sdk-error-audit");sdk_dual=sdk_errors||!strcmp(argv[1],"--run-sdk-two");sdk_bluez=(sdk_dual||!strcmp(argv[1],"--run-sdk-adapter"))?2:!strcmp(argv[1],"--run-sdk-bluez");int sdk=sdk_bluez||!strcmp(argv[1],"--run-sdk");
+    if(argc!=5||(strcmp(argv[1],"--run")&&strcmp(argv[1],"--run-sdk")&&strcmp(argv[1],"--run-sdk-bluez")&&strcmp(argv[1],"--run-sdk-adapter")&&strcmp(argv[1],"--run-sdk-two")&&strcmp(argv[1],"--run-sdk-error-audit")&&strcmp(argv[1],"--run-sdk-owner"))||getuid()||geteuid()||getgid()||getegid())return 2;
+    sdk_owner=!strcmp(argv[1],"--run-sdk-owner");sdk_errors=!strcmp(argv[1],"--run-sdk-error-audit");sdk_dual=sdk_owner||sdk_errors||!strcmp(argv[1],"--run-sdk-two");sdk_bluez=(sdk_dual||!strcmp(argv[1],"--run-sdk-adapter"))?2:!strcmp(argv[1],"--run-sdk-bluez");int sdk=sdk_bluez||!strcmp(argv[1],"--run-sdk");
     if(sdk){
         char pattern[1024];int fd=open("/proc/sys/kernel/core_pattern",O_RDONLY|O_NOFOLLOW|O_CLOEXEC);if(fd<0)return 2;
         ssize_t count=read(fd,pattern,sizeof(pattern));int closed=close(fd);

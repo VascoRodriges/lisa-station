@@ -56,8 +56,9 @@ corrupt framing/padding, invalid names/sizes and maximum UTF-8 body bounds.
 Ruff and **1703 Python/HA tests** pass. CI includes the host fixture and the
 additional ARM factory build, bringing the native build matrix to 46 targets.
 
-Next is an explicitly reviewed exact-name ownership profile with positive and
-negative controls and evidence of actual registration and retirement. There is
+The subsequent [exact-name profile](EXACT_SDK_SERVICE.md) now separately qualifies
+registration and retirement with positive and negative controls. This denial
+profile retains its original policy. There is
 no `own="*"` grant, host-bus forwarding, new hardware or microphone access, or
 production installation here. Full SDK compatibility, normal cloud policy,
 permanent switching and the voice/HA roadmap remain unfinished.

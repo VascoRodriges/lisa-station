@@ -307,3 +307,9 @@ permissions. An optional daemon hook, separate attested pipe and finished SDK
 name history qualify 18 ordered events after an own denied-name control.
 The next step is an exact-name ownership profile with registration/retirement
 and unrelated-name rejection controls; full service and production work remain.
+
+The separate [exact SDK service profile](EXACT_SDK_SERVICE.md) now qualifies
+actual acquisition and retirement of `ru.yandex.quasar` with 34 policy controls,
+fresh driver lookups bound to SDK group names and the unchanged shared query
+budget. Prefix-like and unrelated names remain denied. The SDK next stops at
+the absent ALSA mixer; hardware access and all production phases remain pending.
