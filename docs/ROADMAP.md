@@ -236,6 +236,8 @@ The [audio-free SDK admission diagnostic](SDK_PRIVATE_BUS_DIAGNOSTIC.md) now
 verifies the actual platform SDK, mapped immutable binding and private FD/storage
 view under the common parent. Its tracer drains only enrolled SDK threads while
 preserving independent sibling exit reports; a nine-thread own control passes
-first. The actual SDK still aborts before bus authentication: raw UNIX sockets
-reach the kernel despite the mapped binding and are denied. Call-path compatibility,
+first. Numeric call-origin metadata distinguished denied libc name-cache sockets
+from the SDK's missing logical bind. The reviewed client-label bind is now
+adapted without a kernel bind; SDK SIGPIPE compatibility still prevents bus
+authentication. Call-path compatibility,
 service schemas and the full permanent switching/voice/HA roadmap remain open.

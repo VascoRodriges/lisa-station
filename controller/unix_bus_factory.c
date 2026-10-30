@@ -6,13 +6,15 @@
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <stdio.h>
 #include "unix_byte_adapter.h"
 #define BUS_FACTORY_SLOTS 4u
-struct bus_slot{struct unix_byte_adapter identity;int source;_Atomic int active,connected;};
+struct bus_slot{struct unix_byte_adapter identity;int source;_Atomic int active,connected,bound;};
 static struct bus_slot slots[BUS_FACTORY_SLOTS];
 static unsigned slot_count;
 static _Atomic unsigned next_slot;
 static pthread_once_t once=PTHREAD_ONCE_INIT;
+static int diagnostic;
 static void initialize(void){
     int death=0;pid_t parent=getppid();const char *text=getenv("LISA_BYTE_FDS");
     if(parent<=1||prctl(PR_GET_NO_NEW_PRIVS,0,0,0,0)!=1||prctl(PR_GET_SECCOMP,0,0,0,0)!=2||
@@ -29,6 +31,7 @@ static void initialize(void){
         if(*text++!=','||!*text)_exit(125);
     }
     if(!slot_count||getppid()!=parent)_exit(125);
+    const char *trace=getenv("LISA_BYTE_DIAGNOSTIC");diagnostic=trace&&!strcmp(trace,"1");
 }
 static void ensure_initialized(void){if(pthread_once(&once,initialize))_exit(125);}
 __attribute__((constructor)) static void prepare(void){ensure_initialized();}
@@ -68,21 +71,59 @@ static int approved_address(const struct sockaddr *address,socklen_t length){
     for(size_t i=size+1;i<available;++i)if(local->sun_path[i])return 0;
     return !strcmp(local->sun_path,"/run/dbus/system_bus_socket")||!strcmp(local->sun_path,"/var/run/dbus/system_bus_socket");
 }
+/* The reviewed client labels itself with @<hex>/bus/<part>/<part> before
+ * connect. This optional logical label NEVER binds or renames the already
+ * connected kernel object. The preapproved peer and later connect allowlist
+ * remain unchanged; arbitrary named/abstract addresses are rejected. */
+static int approved_client_label(const struct sockaddr *address,socklen_t length){
+    size_t offset=offsetof(struct sockaddr_un,sun_path);
+    if(!address||length<=offset+1||length>sizeof(struct sockaddr_un)||address->sa_family!=AF_UNIX)return 0;
+    const struct sockaddr_un *local=(const struct sockaddr_un *)address;
+    if(local->sun_path[0])return 0;
+    size_t size=length-offset,position=1;
+    if(!local->sun_path[size-1])--size;
+    while(position<size&&((local->sun_path[position]>='0'&&local->sun_path[position]<='9')||
+        (local->sun_path[position]>='a'&&local->sun_path[position]<='f')))++position;
+    if(position<2||position>17||size-position<8||memcmp(local->sun_path+position,"/bus/",5))return 0;
+    position+=5;unsigned separators=0,part=0;
+    for(;position<size;++position){unsigned char value=(unsigned char)local->sun_path[position];
+        if(value=='/'){if(!part||separators++)return 0;part=0;}
+        else{if(value<33||value>126)return 0;++part;}
+    }
+    return separators==1&&part>0;
+}
+int bind(int fd,const struct sockaddr *address,socklen_t length){
+    struct unix_byte_adapter adapter;struct bus_slot *slot=find_slot(fd,&adapter);
+    if(!slot||!approved_client_label(address,length)){errno=EPERM;return -1;}
+    if(atomic_load(&slot->connected)){errno=EISCONN;return -1;}
+    int expected=0;if(!atomic_compare_exchange_strong(&slot->bound,&expected,1)){errno=EINVAL;return -1;}
+    return 0;
+}
 int connect(int fd,const struct sockaddr *address,socklen_t length){
     struct unix_byte_adapter adapter;struct bus_slot *slot=find_slot(fd,&adapter);
     if(!slot||!approved_address(address,length)){errno=EPERM;return -1;}
     int expected=0;if(!atomic_compare_exchange_strong(&slot->connected,&expected,1)){errno=EISCONN;return -1;}
     return 0;
 }
+/* Opt-in lab stderr contains scalar call metadata only, never buffer contents,
+ * addresses or pointers. The trusted caller owns the private stderr sink. */
+static ssize_t message_result(const char *operation,ssize_t result,const struct msghdr *message,int flags){
+    if(result>=0||!diagnostic)return result;
+    int saved=errno;struct sigaction action;int ignored=!sigaction(SIGPIPE,NULL,&action)&&action.sa_handler==SIG_IGN;
+    char row[256];int size=snprintf(row,sizeof(row),"byte-factory %s error=%d flags=%d vectors=%zu control=%zu name=%u sigpipe_ignored=%d\n",
+        operation,saved,flags,message?(size_t)message->msg_iovlen:0,message?(size_t)message->msg_controllen:0,message?(unsigned)message->msg_namelen:0,ignored);
+    if(size>0&&size<(int)sizeof(row)){ssize_t written=write(2,row,(size_t)size);(void)written;}
+    errno=saved;return result;
+}
 ssize_t sendmsg(int fd,const struct msghdr *message,int flags){
     struct unix_byte_adapter adapter;struct bus_slot *slot=find_slot(fd,&adapter);
     if(!slot)return -1;
     if(!atomic_load(&slot->connected)){errno=ENOTCONN;return -1;}
-    return unix_byte_adapter_send(&adapter,message,flags);
+    return message_result("sendmsg",unix_byte_adapter_send(&adapter,message,flags),message,flags);
 }
 ssize_t recvmsg(int fd,struct msghdr *message,int flags){
     struct unix_byte_adapter adapter;struct bus_slot *slot=find_slot(fd,&adapter);
     if(!slot)return -1;
     if(!atomic_load(&slot->connected)){errno=ENOTCONN;return -1;}
-    return unix_byte_adapter_receive(&adapter,message,flags);
+    return message_result("recvmsg",unix_byte_adapter_receive(&adapter,message,flags),message,flags);
 }

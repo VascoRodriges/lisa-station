@@ -81,6 +81,7 @@ or a substitute TCP stack. Actual SDK identity/hardware/time/queue lifecycle,
 permanent supervision, mode/boot/voice and HA migration remain unfinished.
 
 The subsequent [SDK admission diagnostic](SDK_PRIVATE_BUS_DIAGNOSTIC.md) verifies
-this immutable library mapping in the actual platform SDK. That SDK's raw socket
-calls still fail before private-bus traffic; the own-client qualification above
+this immutable library mapping in the actual platform SDK. A reviewed logical
+client-label bind is now adapted; SIGPIPE compatibility still blocks bus
+authentication. The own-client qualification above
 must not be interpreted as SDK compatibility.

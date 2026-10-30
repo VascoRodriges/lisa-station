@@ -57,27 +57,55 @@ buffers, read/write buffers and audio are never inspected. SDK stderr is retaine
 only in private lab evidence, capped at 64 KiB. The wrapper keeps this evidence in
 ignored `build/` files and never prints SDK logs in its report.
 
+## Call-origin refinement and logical bind
+
+The next diagnostic records numeric PC/LR values and mapped file offsets for
+denied calls. It never reads stack contents or code bytes from the running SDK.
+An own raw-socket rejection exercises this path before the proprietary step.
+Private immutable-file analysis located the two raw socket attempts in libc's
+name-cache client, not in the bus transport. Their denial remains unchanged.
+The original bus-open failure instead followed a raw bind from the SDK.
+
+The reviewed SDK labels its client with `@<hex>/bus/<part>/<part>` before connect.
+The client library now acknowledges only that bounded abstract-label grammar,
+once per admitted object and before logical connect. It never performs a kernel
+bind or creates a new endpoint: the stream remains connected to the preapproved
+peer. Named, malformed and unrelated abstract addresses are rejected. Repeated
+binds and binds after connect fail; raw bind is still denied by the kernel.
+
+Optional `LISA_BYTE_DIAGNOSTIC=1` records only rejected message-call metadata in
+the caller's private stderr: flags, vector/control/name lengths, errno and whether
+SIGPIPE is ignored. It records no addresses, buffer contents or pointers.
+
 ## Observed result
 
 The actual device trial passed the own control and both independent process
 boundaries. The platform SDK loaded the pinned binding, created 16 threads and
-then aborted with a bus-open permission error; all threads were drained. The
-private relay saw no bidirectional SDK protocol traffic. Two raw AF_UNIX stream
-socket attempts reached the kernel and were denied with EPERM, despite the
-library being mapped. This establishes a remaining call-path compatibility gap;
-it is not an authentication or method-authorization success.
+then aborted before authentication; all threads were drained. The logical bind
+removed the previous bind rejection. The next failure is a message-adapter
+contract: the SDK installs a SIGPIPE handler, while the current byte adapter
+requires SIGPIPE to be ignored when emulating MSG_NOSIGNAL with writev. Private
+scalar diagnostics confirm the rejected sendmsg had no ancillary data or
+destination. The private relay still saw no bidirectional SDK protocol traffic.
+Thread-local signal handling must be reviewed and qualified before changing this
+contract; neither a process-global handler override nor a raw-send fallback is
+acceptable.
 
-Both runs preserved stock process/configuration identities, boot identity and
+The completed trials preserved stock process/configuration identities, boot identity and
 firewall rules. All owned actors were reaped and private mount underlays released.
 The control also exercised disappearing register sets during group exit without
 losing the SDK-family drain or reaping its siblings.
 
 Qualified probe SHA256:
-`462ea8d00215af7f571ef07b3c6fe6f7686e077ce8badaa3dd3b33488dbe2a0a`.
-Client/server library artifacts are unchanged from their earlier qualifications.
+`773723bb30d4cbc5555e26a06281287114283fd951765829eca8d094adeba7b4`.
+Client binding:
+`eb056bc3c1f4d44fa542629bed1a34d390ecac5dc3f3eed26752adbc785d459a`.
+The server library is unchanged. Seven factory cases pass 101 native checks on
+the speaker and fortified host, including logical-bind rejection and ordering.
+Ruff and 1475 Python/HA tests pass; the matrix remains at 45 native targets.
 
-Next work is to identify the SDK's actual bus call path and adapt only a reviewed
-preapproved-capability path, retaining independent kernel denial. Narrow service
+Next work is MSG_NOSIGNAL compatibility that preserves the caller's thread mask,
+pending signals and process handler, retaining independent kernel denial. Narrow service
 schemas, normal cloud-Alice network policy, real identity/hardware/time/queue
 lifecycle, permanent supervision/boot/voice and HA migration remain unfinished.
 The strict local diagnostic is not the final cloud-Alice network policy and must

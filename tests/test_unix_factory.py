@@ -10,7 +10,7 @@ def evidence():
         dict(
             event="unix-factory-case",
             case=i,
-            actor_checks=37 if i == 0 else 10 if i == 6 else 0,
+            actor_checks=47 if i == 0 else 10 if i == 6 else 0,
             failures=0,
             expected_rejection=1 <= i <= 5,
             exit_code=125 if 1 <= i <= 5 else 0,
@@ -23,7 +23,7 @@ def evidence():
         dict(
             selftest="unix-factory",
             checks=44,
-            actor_checks=47,
+            actor_checks=57,
             cases=7,
             failures=0,
             ok=True,
@@ -38,6 +38,10 @@ def evidence():
 
 def test_accepts_binding_and_constructor_rejection_cases():
     assert evaluate_events(evidence())
+    rows = evidence()
+    assert rows[7]["actor_checks"] == sum(row["actor_checks"] for row in rows[:7])
+    rows[7]["actor_checks"] = 47
+    assert not evaluate_events(rows)
 
 
 @pytest.mark.parametrize("index", range(7))

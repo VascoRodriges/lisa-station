@@ -117,8 +117,9 @@ actual SDK, permanent modes/boot/voice and HA migration remain unfinished.
 The [audio-free SDK admission diagnostic](docs/SDK_PRIVATE_BUS_DIAGNOSTIC.md)
 now verifies the actual platform executable and loaded client binding, private
 storage/FD boundaries and complete thread teardown beside the bus and relay.
-The SDK still fails to open its bus: raw socket calls bypass the mapped binding
-and remain blocked. No SDK protocol success or usable Alice mode is claimed.
+The SDK still fails before bus authentication. A reviewed logical client-label
+bind now works without a kernel bind; compatibility with the SDK's SIGPIPE
+handler remains pending. No SDK protocol success or usable Alice mode is claimed.
 
 ## Development
 

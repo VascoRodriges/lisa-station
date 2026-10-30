@@ -9,13 +9,33 @@
 #ifndef __arm__
 #error This diagnostic tracer requires the reviewed ARM register ABI
 #endif
-struct task{pid_t tid;unsigned pending,first,second;int active,entering;char path[256];};
+struct task{pid_t tid;unsigned pending,first,second;uint32_t pc,link;int active,entering;char path[256];};
 struct observed{unsigned entries,errors,denied,sockets,opens,clones,threads,lost_registers;int status,execs,verified,bounded,drained,path_control,binding_seen;};
 static uint64_t now_ms(void){struct timespec ts;if(clock_gettime(CLOCK_MONOTONIC,&ts))return 0;return (uint64_t)ts.tv_sec*1000+(uint64_t)ts.tv_nsec/1000000;}
-static int reg_state(pid_t tid,unsigned *number,int32_t *result,uint32_t *first,uint32_t *second){
+static int reg_state(pid_t tid,unsigned *number,int32_t *result,uint32_t *first,uint32_t *second,uint32_t *pc,uint32_t *link){
     uint32_t registers[18];struct iovec buffer={registers,sizeof(registers)};
     if(ptrace(PTRACE_GETREGSET,tid,(void *)(uintptr_t)NT_PRSTATUS,&buffer)||buffer.iov_len!=sizeof(registers))return -1;
-    *number=registers[7];*result=(int32_t)registers[0];*first=registers[0];*second=registers[1];return 0;
+    *number=registers[7];*result=(int32_t)registers[0];*first=registers[0];*second=registers[1];*pc=registers[15];*link=registers[14];return 0;
+}
+/* Map the two sampled code-register values to file offsets, never code bytes
+ * or stack contents. This is diagnostic provenance, not an admission decision. */
+static int sdk_trace_origin(pid_t tid,int output,unsigned *bytes,uint32_t pc,uint32_t link){
+    char path[80],line[PATH_MAX+256];snprintf(path,sizeof(path),"/proc/%ld/maps",(long)tid);
+    FILE *maps=fopen(path,"r");if(!maps)return errno==ENOENT||errno==ESRCH?0:-1;
+    unsigned count=0;int failed=0;
+    while(fgets(line,sizeof(line),maps)){
+        if(++count>8192||!strchr(line,'\n')){failed=1;break;}
+        unsigned long long low,high,offset,inode;unsigned major,minor;char access[5];int position=0;
+        if(sscanf(line,"%llx-%llx %4s %llx %x:%x %llu %n",&low,&high,access,&offset,&major,&minor,&inode,&position)!=7)continue;
+        uint32_t addresses[]={pc,link};
+        for(unsigned i=0;i<2&&*bytes<32768;++i){uint64_t address=addresses[i]&~UINT32_C(1);
+            if(address<low||address>=high)continue;
+            char *object=line+position;size_t length=strlen(object);if(length&&object[length-1]=='\n')object[length-1]=0;
+            char row[PATH_MAX+256];int size=snprintf(row,sizeof(row),"network-origin register=%s value=%x offset=%llx device=%x:%x inode=%llu access=%s object=%s\n",
+                i?"lr":"pc",addresses[i],offset+address-low,major,minor,inode,access,object);
+            if(size<=0||size>=(int)sizeof(row)||store_write_all(output,row,(size_t)size)){failed=1;break;}*bytes+=(unsigned)size;
+        }if(failed)break;
+    }if(ferror(maps))failed=1;fclose(maps);return failed?-1:0;
 }
 static int tgid_is(pid_t tid,pid_t leader){
     char path[80],line[256];snprintf(path,sizeof(path),"/proc/%ld/status",(long)tid);FILE *file=fopen(path,"r");if(!file)return errno==ENOENT||errno==ESRCH?-1:0;
@@ -97,11 +117,11 @@ static int sdk_trace_worker(pid_t child,const char *expected,int *retained,struc
             if(result->verified&&!result->binding_seen&&binding){
                 int mapped=binding(child,context);if(mapped<0)TRACE_FAIL();else if(mapped)result->binding_seen=1;
             }
-            unsigned number;int32_t returned;uint32_t first,second;if(reg_state(tid,&number,&returned,&first,&second)){
+            unsigned number;int32_t returned;uint32_t first,second,pc,link;if(reg_state(tid,&number,&returned,&first,&second,&pc,&link)){
                 if(errno==ESRCH){++result->lost_registers;continue;}
                 TRACE_FAIL();
             }
-            else if(tasks[slot].entering){tasks[slot].pending=number;tasks[slot].first=first;tasks[slot].second=second;
+            else if(tasks[slot].entering){tasks[slot].pending=number;tasks[slot].first=first;tasks[slot].second=second;tasks[slot].pc=pc;tasks[slot].link=link;
                 syscall_path(tid,number,first,second,tasks[slot].path);
                 if(result->verified){++result->entries;if(number==SYS_socket||number==SYS_socketpair||number==SYS_connect)++result->sockets;
                     if(number==SYS_open||number==SYS_openat)++result->opens;
@@ -110,11 +130,13 @@ static int sdk_trace_worker(pid_t child,const char *expected,int *retained,struc
                 ++result->errors;if(returned==-EPERM)++result->denied;
                 /* Numeric kernel ABI metadata only. Never dereference socket
                  * addresses, ancillary data or authentication buffers. */
-                if(binding&&path_bytes<32768&&(tasks[slot].pending==SYS_socket||tasks[slot].pending==SYS_socketpair||tasks[slot].pending==SYS_connect)){
+                if(binding&&path_bytes<32768&&(returned==-EPERM||tasks[slot].pending==SYS_socket||tasks[slot].pending==SYS_socketpair||tasks[slot].pending==SYS_connect)){
                     char row[128];int used;
                     if(tasks[slot].pending==SYS_connect)used=snprintf(row,sizeof(row),"network syscall=%u fd=%u error=%d\n",tasks[slot].pending,tasks[slot].first,-returned);
-                    else used=snprintf(row,sizeof(row),"network syscall=%u domain=%u type=%u error=%d\n",tasks[slot].pending,tasks[slot].first,tasks[slot].second,-returned);
+                    else if(tasks[slot].pending==SYS_socket||tasks[slot].pending==SYS_socketpair)used=snprintf(row,sizeof(row),"network syscall=%u domain=%u type=%u error=%d\n",tasks[slot].pending,tasks[slot].first,tasks[slot].second,-returned);
+                    else used=snprintf(row,sizeof(row),"denied syscall=%u error=%d\n",tasks[slot].pending,-returned);
                     if(used<=0||used>=(int)sizeof(row)||store_write_all(paths,row,(size_t)used))TRACE_FAIL();else path_bytes+=(unsigned)used;
+                    if(sdk_trace_origin(tid,paths,&path_bytes,tasks[slot].pc,tasks[slot].link))TRACE_FAIL();
                 }
                 if(returned==-ENOENT&&!strcmp(tasks[slot].path,"/lisa-sdk-missing-metadata"))result->path_control=1;
                 if(tasks[slot].path[0]&&path_bytes<32768){char row[320];

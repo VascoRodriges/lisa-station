@@ -306,9 +306,12 @@ static int sdk_bus_control(int source,pid_t parent){
     if(!client_equal("/etc/lisa-platform-storage","LISA_PLATFORM_STORAGE_V1\n")||getppid()!=parent||
         prctl(PR_GET_NO_NEW_PRIVS,0,0,0,0)!=1||!unix_byte_channel_valid(source,parent))return 9;
     errno=0;int missing=open("/lisa-sdk-missing-metadata",O_RDONLY|O_NOFOLLOW|O_CLOEXEC);if(missing>=0||errno!=ENOENT)return 9;
+    errno=0;if(syscall(SYS_socket,AF_UNIX,SOCK_STREAM|SOCK_CLOEXEC|SOCK_NONBLOCK,0)>=0||errno!=EPERM)return 9;
     struct sockaddr_un address={.sun_family=AF_UNIX};strcpy(address.sun_path,"/var/run/dbus/system_bus_socket");
     int fd=socket(AF_UNIX,SOCK_STREAM|SOCK_CLOEXEC,0);char guid[33],body[128];
-    if(fd<3||connect(fd,(struct sockaddr *)&address,sizeof(address))||relay_auth(fd,guid)||
+    struct sockaddr_un label={.sun_family=AF_UNIX};memcpy(label.sun_path+1,"abc/bus/own/control",19);
+    if(fd<3||bind(fd,(struct sockaddr *)&label,(socklen_t)(offsetof(struct sockaddr_un,sun_path)+20))||
+        connect(fd,(struct sockaddr *)&address,sizeof(address))||relay_auth(fd,guid)||
         method(fd,"Hello",1,0,body,sizeof(body))||method(fd,"GetId",2,0,body,sizeof(body))||close(fd))return 9;
     int marker=open("/data/quasar/own-bus-gate-proof",O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);
     if(marker<0||store_write_all(marker,"no audio\n",9)||close(marker))return 9;
@@ -613,7 +616,7 @@ static int run_sdk(const char *base,const char *root,const char *own,const char 
         if(client_stage(stage,seeds,profile,1)||platform_storage_enter_with_binding(sdk_root,seeds,profile,image,1,binding)||chdir("/data/quasar"))_exit(82);
         char fd_text[24],parent_text[24];snprintf(fd_text,sizeof(fd_text),"%d",channel);snprintf(parent_text,sizeof(parent_text),"%ld",(long)parent);
         if(setrlimit(RLIMIT_NOFILE,&files)||fcntl(channel,F_SETFD,0)||setenv("LISA_BYTE_FDS",fd_text,1)||
-            setenv("LD_PRELOAD","/opt/lisa/client.so",1)||setenv("LD_BIND_NOW","1",1)||
+            setenv("LD_PRELOAD","/opt/lisa/client.so",1)||setenv("LD_BIND_NOW","1",1)||setenv("LISA_BYTE_DIAGNOSTIC","1",1)||
             setenv("LD_LIBRARY_PATH","/system/vendor/quasar/libs",1)||setenv("GST_PLUGIN_PATH","/system/vendor/quasar/libs",1)||
             setenv("CA_CERTIFICATES","/system/vendor/quasar/ca-certificates.crt",1)||setenv("PWD",".",1)||setenv("MALLOC_ARENA_MAX","2",1))_exit(83);
         int log=open("/data/quasar/diagnostic.stderr",O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);

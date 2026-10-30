@@ -5,7 +5,8 @@ sendmsg/recvmsg calls to a small pool of preapproved byte streams. It is loaded
 only into a prepared child, never through a global preload configuration. The
 independent [kernel guard](UNIX_CHANNEL.md) continues to reject raw socket,
 connect and ancillary-message syscalls when application code bypasses the hooks.
-No real SDK, host bus, device account or audio is connected by this stage.
+The own-client fixture uses no SDK, host bus, device account or audio. Actual SDK
+admission is tested separately in the [audio-free SDK diagnostic](SDK_PRIVATE_BUS_DIAGNOSTIC.md).
 
 ## Admission and one-shot lifetime
 
@@ -32,10 +33,17 @@ calls require that first logical connect and use the existing bounded
 and rejection of outgoing destinations or ancillary data. There is no fallback
 to the actual system bus or an arbitrary network destination.
 
+The optional logical bind acknowledges only the SDK's reviewed bounded abstract
+client-label grammar `@<hex>/bus/<part>/<part>`. It never binds or renames the
+preconnected kernel object. The label may be supplied once before connect; named,
+malformed and unrelated abstract addresses, repeats and post-connect calls fail.
+The raw bind syscall remains denied. Message sending still requires the byte
+adapter's SIGPIPE contract; actual SDK compatibility is not yet complete.
+
 ## Qualification
 
 Seven own-client cases passed on the speaker and fortified Linux host: **44
-parent checks and 47 actor checks, 91 total**. The normal client makes 37 checks;
+parent checks and 57 actor checks, 101 total**. The normal client makes 47 checks;
 the two-thread client makes ten. Five malformed admission cases exit with the
 expected code 125 before running their client. The threaded client claims two
 different streams, returns each stream's own marker and exhausts the pool. Each
@@ -53,10 +61,10 @@ and firewall rules are preserved. The read-only root filesystem is unchanged.
 
 Qualified ARM SHA256 values:
 
-- Binding: `61765af42ad63d79dbaa72f8551a2021fea0e40aae44154c61e2468dfc2e59d6`
-- Probe: `48b42ca44726a9ad0a88c128d8513801dd9d907efe05b07a382b8e1ec8ebaf4a`
+- Binding: `eb056bc3c1f4d44fa542629bed1a34d390ecac5dc3f3eed26752adbc785d459a`
+- Probe: `24d61379b7a59ae8aded89c28cb0cb5e0993f7ad0f6b2257bc5dba750e0cf6ec`
 
-Ruff and **1346 Python/HA tests** pass. There are 41 native build targets. CI
+Ruff and **1475 Python/HA tests** pass. There are 45 native build targets. CI
 builds the binding and repeats the own-client host trial alongside the original
 byte-channel test. Speaker qualification uses the global single-trial lock and
 refuses installed production state; it never stops or restores ordinary Alice.

@@ -244,6 +244,18 @@ static int factory_actor(int output,int control,pid_t parent){
     int first=socket(AF_UNIX,SOCK_STREAM|SOCK_CLOEXEC|SOCK_NONBLOCK,0);check(first>=3);if(first<3)return 9;
     check((fcntl(first,F_GETFD)&FD_CLOEXEC)!=0);check((fcntl(first,F_GETFL)&O_NONBLOCK)!=0);
     struct sockaddr_un address={.sun_family=AF_UNIX};strcpy(address.sun_path,"/lisa-rejected-bus");
+    DENIED(bind(first,(struct sockaddr *)&address,sizeof(address)));
+    DENIED(bind(first,(struct sockaddr *)&address,sizeof(address)+1));
+    address.sun_family=AF_INET;DENIED(bind(first,(struct sockaddr *)&address,sizeof(address)));address.sun_family=AF_UNIX;
+    memset(address.sun_path,0,sizeof(address.sun_path));memcpy(address.sun_path+1,"xyz/bus/control/test",20);
+    socklen_t label_size=(socklen_t)(offsetof(struct sockaddr_un,sun_path)+21);
+    DENIED(bind(first,(struct sockaddr *)&address,label_size));
+    memcpy(address.sun_path+1,"abc/not/control/test",20);DENIED(bind(first,(struct sockaddr *)&address,label_size));
+    memcpy(address.sun_path+1,"abc/bus/control/test",20);check(!bind(first,(struct sockaddr *)&address,label_size));
+    errno=0;check(bind(first,(struct sockaddr *)&address,label_size)<0&&errno==EINVAL);
+    DENIED(syscall(SYS_bind,first,&address,label_size));
+    struct sockaddr_un label=address;
+    memset(address.sun_path,0,sizeof(address.sun_path));strcpy(address.sun_path,"/lisa-rejected-bus");
     DENIED(connect(first,(struct sockaddr *)&address,sizeof(address)));
     memset(address.sun_path,0,sizeof(address.sun_path));memcpy(address.sun_path+1,"lisa-rejected-abstract",22);
     DENIED(connect(first,(struct sockaddr *)&address,sizeof(address)));
@@ -252,6 +264,8 @@ static int factory_actor(int output,int control,pid_t parent){
     errno=0;check(sendmsg(first,&message,MSG_NOSIGNAL|MSG_DONTWAIT)<0&&errno==ENOTCONN);
     DENIED(syscall(SYS_connect,first,&address,sizeof(address)));
     check(!connect(first,(struct sockaddr *)&address,sizeof(address)));
+    errno=0;check(bind(first,(struct sockaddr *)&label,label_size)<0&&errno==EISCONN);
+    DENIED(bind(output,(struct sockaddr *)&label,label_size));
     errno=0;check(connect(first,(struct sockaddr *)&address,sizeof(address))<0&&errno==EISCONN);
     DENIED(syscall(SYS_sendmsg,first,&message,0));
     union{struct cmsghdr alignment;char bytes[CMSG_SPACE(sizeof(int))];} ancillary={0};
@@ -350,6 +364,7 @@ static int factory_selftest(const char *executable,const char *library){
             snprintf(pool,sizeof(pool),"%d,%d",keep[0],variant==2?keep[0]:variant==3?keep[2]:keep[1]);
             if(variant==5)strcpy(pool,"03");
             if(variant==6&&setenv("LISA_FACTORY_CONCURRENT","1",1))_exit(85);
+            if(!variant&&setenv("LISA_BYTE_DIAGNOSTIC","1",1))_exit(85);
             if(setenv("LD_PRELOAD",library,1)||setenv("LD_BIND_NOW","1",1)||(variant!=1&&setenv("LISA_BYTE_FDS",pool,1)))_exit(85);
             snprintf(report,sizeof(report),"%d",keep[2]);snprintf(command,sizeof(command),"%d",keep[3]);snprintf(pid,sizeof(pid),"%ld",(long)parent);
             execl(executable,executable,"--factory-actor",report,command,pid,(char *)NULL);_exit(86);
@@ -364,7 +379,7 @@ static int factory_selftest(const char *executable,const char *library){
             check(!read_full(channel[0][0],reply,variant?1:2)&&(variant?reply[0]=='K':!memcmp(reply,"AD",2)));
             check(!read_full(channel[1][0],&other,1)&&other==(variant?'L':'B'));
             received=!read_full(reports[0],&result,sizeof(result));
-            check(received&&result.process==child&&result.epoch==2&&result.checks==(variant?10u:37u)&&!result.failures);
+            check(received&&result.process==child&&result.epoch==2&&result.checks==(variant?10u:47u)&&!result.failures);
             if(received)actor_total+=result.checks;else kill(child,SIGKILL);
         }
         int status;pid_t done;do{done=waitpid(child,&status,0);}while(done<0&&errno==EINTR);
