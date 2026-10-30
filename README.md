@@ -130,6 +130,10 @@ the SDK's [bounded subscription set](docs/PRIVATE_MATCH_SET.md) through the priv
 daemon API, after an independent two-rule own positive control. It verifies
 subscription removal and observer closure; actual rule evidence stays private.
 
+A [fixed-schema empty ObjectManager codec](docs/PRIVATE_EMPTY_OBJECTS.md) now
+passes synthetic and independent libdbus validation for the next service audit.
+It does not enable Bluetooth or change the current SDK/service permissions.
+
 ## Development
 
 Use Python 3.14 on Linux in an isolated virtual environment:

@@ -258,3 +258,9 @@ two actual BlueZ ObjectManager watchers privately and proves SDK state removal
 and observer closure. The next dependency is the absent org.bluez service;
 host-bus forwarding and service access remain denied. All permanent production
 scope remains unfinished.
+
+The next service audit now has a qualified
+[fixed-schema empty ObjectManager codec](PRIVATE_EMPTY_OBJECTS.md): bounded
+zero-argument request validation and an independently parsed empty-tree reply.
+It has no bus/service/device I/O and grants no runtime rights. A private owner,
+bounded parent pump and live own-client/SDK composition remain required.
