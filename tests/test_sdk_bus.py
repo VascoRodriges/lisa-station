@@ -277,3 +277,61 @@ def test_malformed_or_repeated_notices_never_infer_an_allocation_cause(data):
 @pytest.mark.parametrize("truncated", [True, 1, None])
 def test_incomplete_allocation_diagnostics_are_not_inferred(truncated):
     assert allocation_diagnostic(b"byte-factory channel-budget exhausted slots=1\n", truncated=truncated) == dict(kind="invalid")
+
+
+def dual_evidence():
+    original = adapter_evidence()
+    rows = [dict(event="sdk-policy-epoch", ok=True, checks=29, provider_closed=True,
+                 observer_only=True, observer_closed=True, bus_reaped=True, private_view_released=True)]
+    for start in [0, 4]:
+        rows.append(dict(original[start], source_channels=2, source_admission_checks=5 if start == 0 else 0))
+        rows.extend(dict(original[start + 1], slot=slot) for slot in [0, 1])
+        rows.append(dict(original[start + 2]))
+        rows.append(dict(original[start + 3], event="sdk-group-observer", sdk_names=2,
+                         active_names=0, group_finished=True, peak_rules=3 if start == 0 else 2))
+    return rows + original[8:]
+
+
+def test_dual_channels_require_separate_policy_and_two_relay_proofs():
+    assert evaluate_events(dual_evidence(), dual_channels=True)
+    assert not evaluate_events(dual_evidence(), synthetic_adapter=True)
+    assert not evaluate_events(adapter_evidence(), dual_channels=True)
+    assert not evaluate_events(dual_evidence(), dual_channels=True, synthetic_adapter=True)
+    with pytest.raises(ValueError):
+        diagnostic_script(dual_channels=True, empty_bluez=True)
+    script = diagnostic_script(dual_channels=True)
+    assert "PROBE --run-sdk-two " in script
+    assert script.count("/root[012]-channel[01]-relay.child") == 2
+    assert script.count("for channel in 0 1; do") == 2
+    assert "rm -r" not in script
+
+
+@pytest.mark.parametrize("index", range(16))
+def test_dual_channels_require_all_ordered_unique_typed_events(index):
+    rows = dual_evidence()
+    del rows[index]
+    assert not evaluate_events(rows, dual_channels=True)
+    rows = dual_evidence()
+    rows.insert(index, deepcopy(rows[index]))
+    assert not evaluate_events(rows, dual_channels=True)
+    rows = dual_evidence()
+    rows[index]["unexpected"] = True
+    assert not evaluate_events(rows, dual_channels=True)
+
+
+@pytest.mark.parametrize("index,key,value", [
+    (0, "ok", False), (0, "checks", 28), (0, "provider_closed", False),
+    (0, "observer_only", False), (0, "observer_closed", False), (0, "bus_reaped", False),
+    (0, "private_view_released", False), (1, "source_channels", 1), (6, "source_channels", True),
+    (1, "source_admission_checks", 4), (6, "source_admission_checks", 5), (1, "source_admission_checks", True),
+    (2, "slot", 1), (3, "slot", 0), (3, "auth_verified", False), (8, "auth_verified", False),
+    (2, "boundary_ok", False), (3, "actor_checks", 10), (7, "protocol_traffic", False),
+    (5, "sdk_names", 1), (10, "sdk_names", 3), (10, "sdk_names", True),
+    (5, "active_names", 1), (10, "active_names", False), (5, "group_finished", False),
+    (5, "group_finished", 1), (5, "peak_rules", 2), (10, "peak_rules", 9),
+    (10, "sdk_subscription_removed", False), (10, "observer_closed", False),
+])
+def test_dual_channels_reject_unowned_or_unretired_source_evidence(index, key, value):
+    rows = dual_evidence()
+    rows[index][key] = value
+    assert not evaluate_events(rows, dual_channels=True)

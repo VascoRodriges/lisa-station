@@ -149,8 +149,13 @@ that this refusal comes from the one-shot channel budget. Independent
 two-channel SDK admission and teardown remain the next composition step.
 
 The [two-name group ledger](docs/SDK_NAME_LEDGER.md) now qualifies metadata
-retirement without name reuse. It is a pure prerequisite; the live SDK still
-receives one channel while two-stream ownership and admission are prepared.
+retirement without name reuse. Source-object admission and relay ownership are
+separate obligations of the coordinator.
+
+The [explicit two-channel SDK diagnostic](docs/DUAL_SDK_CHANNELS.md) now composes
+those ownership and retirement checks. Both SDK connections authenticate and
+close through separate relays; the next denied dependency is service-name
+ownership. Permanent switching and usable SDK functionality remain unfinished.
 
 ## Development
 

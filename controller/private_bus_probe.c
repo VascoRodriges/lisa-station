@@ -27,11 +27,13 @@
 #include "private_match_snapshot.h"
 #include "private_empty_objects.h"
 #include "private_adapter_objects.h"
+#include "sdk_name_ledger.h"
 #ifndef __arm__
 #error This namespace diagnostic requires the reviewed ARM device ABI
 #endif
 static unsigned checks,failures;
 static int sdk_bluez;
+static int sdk_dual;
 static void check(int ok){++checks;if(!ok){++failures;fprintf(stderr,"private bus check %u errno %d\n",checks,errno);}}
 static int full(int fd,void *buffer,size_t size){
     uint64_t end=guardian_milliseconds()+3000;size_t used=0;
@@ -341,7 +343,7 @@ static int policy_peer_signal(int fd){
     put32(bytes+12,(uint32_t)(used-16));used=(used+7)&~(size_t)7;
     return store_write_all(fd,(const char *)bytes,used);
 }
-static int policy_driver_change(int fd,const char *name){
+static int policy_driver_transition(int fd,const char *name,int lost){
     for(unsigned i=0;i<12;++i){struct policy_frame frame;if(policy_frame_read(fd,&frame)||frame.type!=4||strcmp(frame.sender,"org.freedesktop.DBus"))return -1;
         if(strcmp(frame.member,"NameOwnerChanged"))return -1;
         if(strcmp(frame.interface,"org.freedesktop.DBus")||strcmp(frame.path,"/org/freedesktop/DBus")||strcmp(frame.signature,"sss"))return -1;
@@ -351,9 +353,10 @@ static int policy_driver_change(int fd,const char *name){
             if(size>=sizeof(strings[j])||cursor+size>=frame.start+frame.payload||frame.bytes[cursor+size]||memchr(frame.bytes+cursor,0,size))return -1;
             memcpy(strings[j],frame.bytes+cursor,size+1);cursor+=size+1;}
         if(cursor!=frame.start+frame.payload)return -1;
-        return !strcmp(strings[0],name)&&!strings[1][0]&&!strcmp(strings[2],name)?0:-1;
+        return !strcmp(strings[0],name)&&(lost?(!strcmp(strings[1],name)&&!strings[2][0]):(!strings[1][0]&&!strcmp(strings[2],name)))?0:-1;
     }return -1;
 }
+static int policy_driver_change(int fd,const char *name){return policy_driver_transition(fd,name,0);}
 struct sdk_empty_provider {
     int fd;unsigned serial,calls,signals,owned,closed;uint64_t spent;
     char name[MATCH_NAME];struct stat identity;
@@ -381,7 +384,7 @@ static int provider_open(const char *endpoint,struct sdk_empty_provider *provide
     if(auth(fd,guid)||text_send(fd,"BEGIN\r\n")||method(fd,"Hello",1,0,name,sizeof(name))||provider_admit(fd,name,provider)){close(fd);return -1;}
     return 0;
 }
-static int provider_pump(struct sdk_empty_provider *provider,const char *sender){
+static int provider_pump(struct sdk_empty_provider *provider,const char *sender,const char *second_sender){
     if(!provider)return 0;
     struct stat actual;
     if(provider->fd<3||policy_io_end||fstat(provider->fd,&actual)||actual.st_dev!=provider->identity.st_dev||actual.st_ino!=provider->identity.st_ino)return -1;
@@ -396,11 +399,11 @@ static int provider_pump(struct sdk_empty_provider *provider,const char *sender)
     if(first[0]=='l'&&first[1]==4){struct policy_frame frame;
         good=provider->signals<16&&!policy_frame_read(provider->fd,&frame)&&frame.type==4&&!strcmp(frame.sender,"org.freedesktop.DBus");
         if(good)++provider->signals;
-    }else if(first[0]=='l'&&first[1]==1&&provider->calls<4&&empty_objects_name_size(sender)){
+    }else if(first[0]=='l'&&first[1]==1&&provider->calls<4&&(empty_objects_name_size(sender)||empty_objects_name_size(second_sender))){
         unsigned char bytes[EMPTY_OBJECTS_FRAME];struct private_empty_request request;size_t written=0;
         if(!policy_io(provider->fd,bytes,16,0)){size_t fields=u32(bytes+12),length=(16+fields+7)&~(size_t)7;
             if(!u32(bytes+4)&&fields<=4096&&length<=sizeof(bytes)&&!policy_io(provider->fd,bytes+16,length-16,0)&&
-                !private_empty_request_decode(bytes,length,sender,&request)&&
+                (!private_empty_request_decode(bytes,length,sender,&request)||!private_empty_request_decode(bytes,length,second_sender,&request))&&
                 !(sdk_bluez==2?private_adapter_reply(&request,++provider->serial,bytes,sizeof(bytes),&written):private_empty_reply(&request,++provider->serial,bytes,sizeof(bytes),&written))&&
                 !policy_io(provider->fd,bytes,written,1)){++provider->calls;good=1;}
         }
@@ -413,11 +416,13 @@ static int provider_close(struct sdk_empty_provider *provider){
     if(result||fcntl(fd,F_GETFD)>=0||errno!=EBADF)return -1;provider->closed=1;return 0;
 }
 struct sdk_match_observer {
-    int fd;unsigned serial,queries,reads,captured,post_absent,closed;uint64_t spent;
+    int fd;unsigned serial,queries,reads,second_reads,captured,post_absent,closed;uint64_t spent;
     char name[MATCH_NAME];
     struct stat identity;struct private_match_entry baseline,peak,provider;
+    struct sdk_name_ledger names;
 };
 static const char *const own_match_rules[]={"type='signal'","type='signal',interface='org.example.LisaObserver'"};
+static const char own_second_rule[]="type='signal',interface='org.example.LisaSecond'";
 static int match_contains(const struct private_match_entry *entry,const char *rule){
     for(unsigned i=0;i<entry->rules;++i)if(!strcmp(private_match_rule(entry,i),rule))return 1;
     return 0;
@@ -463,10 +468,16 @@ static int observer_open(const char *endpoint,struct sdk_match_observer *observe
         close(fd);observer->fd=-1;return -1;
     }return 0;
 }
-static int observer_snapshot(struct sdk_match_observer *observer){
-    if(observer->captured==MATCH_RULES)return 0;
-    if(++observer->reads>32)return -1;
+static int observer_snapshot(struct sdk_match_observer *observer,unsigned source){
+    if(!sdk_dual&&observer->captured==MATCH_RULES)return 0;
+    if(source>1)return -1;
+    unsigned *reads=source?&observer->second_reads:&observer->reads;if(++*reads>32)return -1;
     struct private_match_snapshot snapshot;if(observer_query(observer,&snapshot))return -1;
+    if(sdk_dual){
+        if(sdk_ledger_observe(&observer->names,&snapshot,&observer->baseline,&observer->provider))return -1;
+        observer->captured=0;for(unsigned i=0;i<observer->names.count;++i)observer->captured+=observer->names.peak[i].rules;
+        return 0;
+    }
     const struct private_match_entry *self=private_match_find(&snapshot,observer->name);
     if(!self||self->rules!=observer->baseline.rules||!match_includes(self,&observer->baseline)||snapshot.clients>(observer->provider.name[0]?3u:2u))return -1;
     if(observer->provider.name[0]){const struct private_match_entry *entry=private_match_find(&snapshot,observer->provider.name);
@@ -477,13 +488,16 @@ static int observer_snapshot(struct sdk_match_observer *observer){
         observer->peak=*entry;observer->captured=entry->rules;
     }return 0;
 }
-static int observer_after_sdk(struct sdk_match_observer *observer){
+static int observer_after_sdk(struct sdk_match_observer *observer,int policy_only){
     uint64_t end=now_ms()+300;
-    if(!observer->captured)return -1;
+    if(!policy_only&&!observer->captured)return -1;
     do{struct private_match_snapshot snapshot;if(observer_query(observer,&snapshot))return -1;
         const struct private_match_entry *self=private_match_find(&snapshot,observer->name);
         if(!self||self->rules!=observer->baseline.rules||!match_includes(self,&observer->baseline))return -1;
-        if(snapshot.clients==1&&!private_match_find(&snapshot,observer->peak.name)){observer->post_absent=1;return 0;}
+        if(snapshot.clients==1&&!private_match_find(&snapshot,observer->peak.name)){
+            if(sdk_dual&&sdk_ledger_finish(&observer->names,&snapshot,&observer->baseline))return -1;
+            observer->post_absent=1;return 0;
+        }
         struct timespec pause={0,5000000};nanosleep(&pause,NULL);
     }while(now_ms()<end);
     return -1;
@@ -497,7 +511,20 @@ static int observer_close(struct sdk_match_observer *observer){
 static int observer_save(const char *base,unsigned role,const struct sdk_match_observer *observer){
     if(!observer->captured)return -1;
     char path[PATH_MAX],header[160];
-    if(observer->captured>MATCH_RULES||snprintf(path,sizeof(path),"%s/sdk%u-match.private.txt",base,role)>=(int)sizeof(path))return -1;
+    if((!sdk_dual&&observer->captured>MATCH_RULES)||snprintf(path,sizeof(path),"%s/sdk%u-match.private.txt",base,role)>=(int)sizeof(path))return -1;
+    if(sdk_dual){
+        if(!sdk_ledger_valid(&observer->names)||!observer->names.finished||observer->names.count!=2)return -1;
+        int fd=open(path,O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);if(fd<0)return -1;
+        const char preamble[]="PRIVATE_MATCH_V3\ngroup_names 2\n";int failed=store_write_all(fd,preamble,sizeof(preamble)-1);
+        for(unsigned i=0;!failed&&i<2;++i){const struct private_match_entry *entry=&observer->names.peak[i];
+            int n=snprintf(header,sizeof(header),"name %s\nrules %u\n",entry->name,entry->rules);
+            failed=n<=0||n>=(int)sizeof(header)||store_write_all(fd,header,(size_t)n);
+            for(unsigned j=0;!failed&&j<entry->rules;++j){const char *rule=private_match_rule(entry,j);size_t size=strlen(rule);
+                n=snprintf(header,sizeof(header),"rule_bytes %zu\n",size);
+                failed=n<=0||n>=(int)sizeof(header)||store_write_all(fd,header,(size_t)n)||store_write_all(fd,rule,size)||store_write_all(fd,"\n",1);
+            }
+        }if(close(fd))failed=1;return failed?-1:0;
+    }
     int length=snprintf(header,sizeof(header),"PRIVATE_MATCH_V2\nname %s\nrules %u\n",observer->peak.name,observer->captured);
     if(length<=0||length>=(int)sizeof(header))return -1;
     int fd=open(path,O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);if(fd<0)return -1;
@@ -557,18 +584,26 @@ done:
     return good?0:-1;
 }
 static int client_equal(const char *path,const char *expected);
-struct sdk_bus_context {int channel_fd,log_known;struct stat channel,binding,log;struct sdk_match_observer *observer;struct sdk_empty_provider *provider;};
+struct sdk_bus_context {int channel_fd[2],log_known;unsigned channels;struct stat channel[2],binding,log;struct sdk_match_observer *observer;struct sdk_empty_provider *provider;};
 static int sdk_provider_idle(pid_t child,void *opaque){
     (void)child;struct sdk_bus_context *context=opaque;
-    return provider_pump(context->provider,context->observer->peak.name);
+    struct sdk_match_observer *observer=context->observer;
+    const char *first=observer->peak.name,*second=NULL;
+    if(sdk_dual){
+        first=observer->names.count>0&&(observer->names.active&1)?observer->names.peak[0].name:NULL;
+        second=observer->names.count>1&&(observer->names.active&2)?observer->names.peak[1].name:NULL;
+    }
+    return provider_pump(context->provider,first,second);
 }
 static int sdk_observer_received(pid_t child,unsigned fd,int32_t size,void *opaque){
     struct sdk_bus_context *context=opaque;
-    if(!context->observer||context->observer->captured==MATCH_RULES||fd<3||fd>INT_MAX||size<=0)return 0;
+    if(context->channels!=(sdk_dual?2u:1u))return -1;
+    if(!context->observer||(!sdk_dual&&context->observer->captured==MATCH_RULES)||fd<3||fd>INT_MAX||size<=0)return 0;
     char path[80];struct stat identity;snprintf(path,sizeof(path),"/proc/%ld/fd/%u",(long)child,fd);
     if(stat(path,&identity))return errno==ENOENT||errno==ESRCH?0:-1;
-    if(!S_ISSOCK(identity.st_mode)||identity.st_dev!=context->channel.st_dev||identity.st_ino!=context->channel.st_ino)return 0;
-    return observer_snapshot(context->observer);
+    unsigned source=0;for(;source<context->channels;++source)if(S_ISSOCK(identity.st_mode)&&identity.st_dev==context->channel[source].st_dev&&identity.st_ino==context->channel[source].st_ino)break;
+    if(source==context->channels)return 0;
+    return observer_snapshot(context->observer,source);
 }
 static int sdk_bus_caps_zero(pid_t child){
     char path[80],line[256];snprintf(path,sizeof(path),"/proc/%ld/status",(long)child);FILE *file=fopen(path,"r");if(!file)return 0;
@@ -593,6 +628,7 @@ static int sdk_bus_caps_zero(pid_t child){
 }
 static int sdk_bus_view(pid_t child,struct stat *data,void *opaque){
     struct sdk_bus_context *context=opaque;
+    if(context->channels!=(sdk_dual?2u:1u))return 0;
     char path[PATH_MAX],a[128],b[128];struct stat info,host;struct statvfs fs;
     snprintf(path,sizeof(path),"/proc/%ld/ns/mnt",(long)child);
     ssize_t x=readlink("/proc/self/ns/mnt",a,sizeof(a)),y=readlink(path,b,sizeof(b));
@@ -614,13 +650,14 @@ static int sdk_bus_view(pid_t child,struct stat *data,void *opaque){
     for(unsigned i=0;i<sizeof(hidden)/sizeof(hidden[0]);++i){snprintf(path,sizeof(path),"/proc/%ld/root%s",(long)child,hidden[i]);
         if(!lstat(path,&info)||errno!=ENOENT){fprintf(stderr,"sdk view stage %d\n",__LINE__);return 0;}}
     snprintf(path,sizeof(path),"/proc/%ld/fd",(long)child);DIR *fds=opendir(path);if(!fds){fprintf(stderr,"sdk view stage %d\n",__LINE__);return 0;}
-    unsigned count=0;int valid=1;struct dirent *entry;
+    unsigned count=0,source_mask=0;int valid=context->channels>=1&&context->channels<=2;struct dirent *entry;
     if(stat("/dev/null",&host)){closedir(fds);{fprintf(stderr,"sdk view stage %d\n",__LINE__);return 0;}}
     while((entry=readdir(fds))){char *end;long n=strtol(entry->d_name,&end,10);if(*end)continue;
-        if(n<0||(n>2&&n!=context->channel_fd)){valid=0;break;}
+        unsigned source=0;while(source<context->channels&&n!=context->channel_fd[source])++source;
+        if(n<0||(n>2&&source==context->channels)){valid=0;break;}
         ++count;snprintf(path,sizeof(path),"/proc/%ld/fd/%ld",(long)child,n);
         if(stat(path,&info)){valid=0;break;}
-        if(n==context->channel_fd){if(!S_ISSOCK(info.st_mode)||info.st_dev!=context->channel.st_dev||info.st_ino!=context->channel.st_ino){valid=0;break;}}
+        if(source<context->channels){if(!S_ISSOCK(info.st_mode)||info.st_dev!=context->channel[source].st_dev||info.st_ino!=context->channel[source].st_ino||(source_mask&(1u<<source))){valid=0;break;}source_mask|=1u<<source;}
         else if(n==2){struct stat log;snprintf(path,sizeof(path),"/proc/%ld/root/data/quasar/diagnostic.stderr",(long)child);
             if(stat(path,&log)||!S_ISREG(info.st_mode)||info.st_dev!=data->st_dev||info.st_ino!=log.st_ino||info.st_nlink!=1||(info.st_mode&07777)!=0600){valid=0;break;}
             if(context->log_known&&(info.st_dev!=context->log.st_dev||info.st_ino!=context->log.st_ino)){valid=0;break;}
@@ -628,7 +665,7 @@ static int sdk_bus_view(pid_t child,struct stat *data,void *opaque){
         else if(!S_ISCHR(info.st_mode)||info.st_rdev!=host.st_rdev){valid=0;break;}
     }
     closedir(fds);
-    if(!valid||count!=4||!sdk_bus_caps_zero(child)){fprintf(stderr,"sdk view final %u %d\n",count,valid);return 0;}
+    if(!valid||count!=3+context->channels||source_mask!=(1u<<context->channels)-1u||!sdk_bus_caps_zero(child)){fprintf(stderr,"sdk view final %u %d\n",count,valid);return 0;}
     snprintf(path,sizeof(path),"/proc/%ld/root/opt/lisa/client.so",(long)child);
     if(stat(path,&info)||info.st_dev!=context->binding.st_dev||info.st_ino!=context->binding.st_ino||
         statvfs(path,&fs)||!(fs.f_flag&ST_RDONLY)||!(fs.f_flag&ST_NOSUID)||!(fs.f_flag&ST_NODEV))return 0;
@@ -648,7 +685,7 @@ static int sdk_binding_mapped(pid_t child,void *opaque){
 static _Atomic int sdk_control_ready;
 static void *sdk_control_thread(void *unused){(void)unused;atomic_fetch_add(&sdk_control_ready,1);
     for(;;){struct timespec pause={0,1000000};nanosleep(&pause,NULL);}return NULL;}
-static int sdk_bus_control(int source,pid_t parent,const char *provider,int adapter){
+static int sdk_bus_control(int source,pid_t parent,const char *provider,int adapter,int dual){
     if(!client_equal("/etc/lisa-platform-storage","LISA_PLATFORM_STORAGE_V1\n")||getppid()!=parent||
         prctl(PR_GET_NO_NEW_PRIVS,0,0,0,0)!=1||!unix_byte_channel_valid(source,parent))return 9;
     errno=0;int missing=open("/lisa-sdk-missing-metadata",O_RDONLY|O_NOFOLLOW|O_CLOEXEC);if(missing>=0||errno!=ENOENT)return 9;
@@ -670,6 +707,13 @@ static int sdk_bus_control(int source,pid_t parent,const char *provider,int adap
         if(adapter){unsigned char expected[ADAPTER_BODY];size_t count=0;
             if(private_adapter_body(expected,sizeof(expected),&count)||response.payload!=count||memcmp(response.bytes+response.start,expected,count))return 9;
         }else if(response.payload!=8||u32(response.bytes+response.start)||u32(response.bytes+response.start+4))return 9;
+    }
+    if(dual){
+        int next=socket(AF_UNIX,SOCK_STREAM|SOCK_CLOEXEC,0);char next_name[128];
+        if(next<3||connect(next,(struct sockaddr *)&address,sizeof(address))||relay_auth_implicit(next,guid)||
+            method(next,"Hello",1,0,next_name,sizeof(next_name))||method(next,"GetId",2,0,body,sizeof(body))||
+            policy_call(next,"org.freedesktop.DBus","AddMatch",3,1,own_second_rule,NULL)||policy_driver_change(fd,next_name)||close(next)||
+            policy_driver_transition(fd,next_name,1)||method(fd,"GetId",6,0,body,sizeof(body)))return 9;
     }
     if(close(fd))return 9;
     int marker=open("/data/quasar/own-bus-gate-proof",O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);
@@ -953,12 +997,15 @@ static int capture_sdk_log(int retained,const char *base,unsigned role,const str
         if(store_write_all(output,buffer,(size_t)size)){failed=1;break;}*bytes+=(unsigned)size;}
     *truncated=info.st_size>(off_t)*bytes;close(input);if(output>=0&&close(output))failed=1;return failed?-1:0;
 }
-static int run_sdk(const char *base,const char *root,const char *own,const char *binding,int channel,unsigned role,struct sdk_match_observer *observer,struct sdk_empty_provider *provider){
-    char sdk_root[PATH_MAX],stage[PATH_MAX];struct sdk_bus_context context={.channel_fd=channel,.observer=observer,.provider=provider};
+static int run_sdk(const char *base,const char *root,const char *own,const char *binding,int channel,int second,unsigned role,struct sdk_match_observer *observer,struct sdk_empty_provider *provider){
+    if(channel<3||(second!=-1&&second<3))return -1;
+    char sdk_root[PATH_MAX],stage[PATH_MAX];struct sdk_bus_context context={.channel_fd={channel,second},.channels=second>=3?2:1,.observer=observer,.provider=provider};
     if(snprintf(sdk_root,sizeof(sdk_root),"%s-sdk",root)>=(int)sizeof(sdk_root)||mkdir(sdk_root,0700)||
         snprintf(stage,sizeof(stage),"%s-sdk-stage",root)>=(int)sizeof(stage)||mkdir(stage,0700)||
-        fstat(channel,&context.channel)||stat(binding,&context.binding)){close(channel);return -1;}
-    pid_t parent=getpid(),child=fork();if(child<0){close(channel);return -1;}
+        fstat(channel,&context.channel[0])||(second>=3&&(second==channel||fstat(second,&context.channel[1])||
+            (context.channel[0].st_dev==context.channel[1].st_dev&&context.channel[0].st_ino==context.channel[1].st_ino)))||stat(binding,&context.binding)){
+        close(channel);if(second>=3&&second!=channel)close(second);return -1;}
+    pid_t parent=getpid(),child=fork();if(child<0){close(channel);if(second>=3)close(second);return -1;}
     if(!child){
         if(prctl(PR_SET_PDEATHSIG,SIGKILL)||getppid()!=parent)_exit(80);
         char path[PATH_MAX],stamp_text[96];struct process_stamp stamp;
@@ -966,7 +1013,7 @@ static int run_sdk(const char *base,const char *root,const char *own,const char 
         int record=open(path,O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);
         int size=snprintf(stamp_text,sizeof(stamp_text),"%ld %" PRIu64 "\n",(long)getpid(),stamp.ticks);
         if(record<0||store_write_all(record,stamp_text,(size_t)size)||fsync(record)||close(record))_exit(80);
-        int keep[]={channel};if(guardian_close_except(keep,1))_exit(81);
+        int keep[]={channel,second};if(guardian_close_except(keep,context.channels))_exit(81);
         int zero=open("/dev/null",O_RDWR|O_CLOEXEC);if(zero<0)_exit(81);
         for(int i=0;i<3;++i)if(dup2(zero,i)<0||fcntl(i,F_SETFD,0))_exit(81);if(zero>2)close(zero);
         struct rlimit stack={1024*1024,1024*1024},cpu={4,5},data={96u*1024*1024,96u*1024*1024},memory={256u*1024*1024,256u*1024*1024},files={128,128},core={0,0},size_limit={2u*1024*1024,2u*1024*1024};
@@ -974,8 +1021,10 @@ static int run_sdk(const char *base,const char *root,const char *own,const char 
             setrlimit(RLIMIT_CORE,&core)||setrlimit(RLIMIT_FSIZE,&size_limit)||clearenv())_exit(81);
         char seeds[PATH_MAX],profile[PATH_MAX];const char *image=role?"/system/vendor/quasar/maind":own;
         if(client_stage(stage,seeds,profile,1)||platform_storage_enter_with_binding(sdk_root,seeds,profile,image,1,binding)||chdir("/data/quasar"))_exit(82);
-        char fd_text[24],parent_text[24];snprintf(fd_text,sizeof(fd_text),"%d",channel);snprintf(parent_text,sizeof(parent_text),"%ld",(long)parent);
-        if(setrlimit(RLIMIT_NOFILE,&files)||fcntl(channel,F_SETFD,0)||setenv("LISA_BYTE_FDS",fd_text,1)||
+        char fd_text[32],primary_text[24],parent_text[24];snprintf(primary_text,sizeof(primary_text),"%d",channel);
+        if(second>=3)snprintf(fd_text,sizeof(fd_text),"%d,%d",channel,second);else snprintf(fd_text,sizeof(fd_text),"%d",channel);
+        snprintf(parent_text,sizeof(parent_text),"%ld",(long)parent);
+        if(setrlimit(RLIMIT_NOFILE,&files)||fcntl(channel,F_SETFD,0)||(second>=3&&(fcntl(second,F_SETFD,0)||!unix_byte_channel_valid(second,parent)))||setenv("LISA_BYTE_FDS",fd_text,1)||
             setenv("LD_PRELOAD","/opt/lisa/client.so",1)||setenv("LD_BIND_NOW","1",1)||setenv("LISA_BYTE_DIAGNOSTIC","1",1)||
             setenv("LD_LIBRARY_PATH","/system/vendor/quasar/libs",1)||setenv("GST_PLUGIN_PATH","/system/vendor/quasar/libs",1)||
             setenv("CA_CERTIFICATES","/system/vendor/quasar/ca-certificates.crt",1)||setenv("PWD",".",1)||setenv("MALLOC_ARENA_MAX","2",1))_exit(83);
@@ -984,14 +1033,23 @@ static int run_sdk(const char *base,const char *root,const char *own,const char 
         if(ptrace(PTRACE_TRACEME,0,NULL,NULL)||vendor_identity_prepare(57342)||platform_sdk_guard(parent)||unix_byte_channel_guard(channel,parent))_exit(85);
         if(raise(SIGSTOP))_exit(86);
         if(role)execl("/system/vendor/quasar/maind","maind","--platformd",(char *)NULL);
-        else if(provider)execl("/system/vendor/quasar/maind","sdk-bus-control",sdk_bluez==2?"--sdk-adapter-control":"--sdk-bluez-control",fd_text,parent_text,provider->name,(char *)NULL);
+        else if(provider)execl("/system/vendor/quasar/maind","sdk-bus-control",sdk_dual?"--sdk-two-control":sdk_bluez==2?"--sdk-adapter-control":"--sdk-bluez-control",primary_text,parent_text,provider->name,(char *)NULL);
         else execl("/system/vendor/quasar/maind","sdk-bus-control","--sdk-control",fd_text,parent_text,(char *)NULL);
         _exit(87);
     }
     int status=0;pid_t waited;do{waited=waitpid(child,&status,0);}while(waited<0&&errno==EINTR);
     struct stat data;int stopped=waited==child&&WIFSTOPPED(status)&&WSTOPSIG(status)==SIGSTOP;
     int good=stopped&&sdk_bus_view(child,&data,&context);check(good);
-    close(channel);
+    unsigned admission_checks=0;
+    if(good&&sdk_dual&&!role){
+        unsigned before=failures;int expected_fd=context.channel_fd[1];struct stat expected_object=context.channel[1];
+        context.channels=1;++admission_checks;check(!sdk_bus_view(child,&data,&context));context.channels=2;
+        context.channel_fd[1]=context.channel_fd[0];++admission_checks;check(!sdk_bus_view(child,&data,&context));context.channel_fd[1]=expected_fd;
+        context.channel[1]=context.channel[0];++admission_checks;check(!sdk_bus_view(child,&data,&context));context.channel[1]=expected_object;
+        context.channel_fd[1]=INT_MAX;++admission_checks;check(!sdk_bus_view(child,&data,&context));context.channel_fd[1]=expected_fd;
+        ++admission_checks;check(sdk_bus_view(child,&data,&context));good=failures==before;
+    }
+    close(channel);if(second>=3)close(second);
     if(!good){if(stopped){kill(child,SIGKILL);ptrace(PTRACE_CONT,child,NULL,(void *)(intptr_t)SIGKILL);while(waitpid(child,&status,__WALL)<0&&errno==EINTR){}}return -1;}
     long options=PTRACE_O_EXITKILL|PTRACE_O_TRACEEXEC|PTRACE_O_TRACECLONE|PTRACE_O_TRACESYSGOOD;
     char path[PATH_MAX];if(snprintf(path,sizeof(path),"%s/sdk%u-paths.private.txt",base,role)>=(int)sizeof(path))return -1;
@@ -1013,12 +1071,13 @@ static int run_sdk(const char *base,const char *root,const char *own,const char 
     good=good&&!traced&&result.verified&&result.drained&&result.binding_seen;
     if(!role&&(!WIFSIGNALED(result.status)||WTERMSIG(result.status)!=SIGABRT||result.threads!=9||!(objects&1)||!result.path_control))good=0;
     if(rmdir(sdk_root)||rmdir(stage))good=0;
-    printf("{\"event\":\"sdk-bus-diagnostic\",\"role\":\"%s\",\"boundary_ok\":%s,\"exec_verified\":%s,\"binding_mapped\":%s,\"drained\":%s,\"threads\":%u,\"syscalls\":%u,\"denied\":%u,\"socket_attempts\":%u,\"lost_registers\":%u,\"bounded_stop\":%s,\"exit_code\":%d,\"exit_signal\":%d,\"private_objects_mask\":%u,\"path_control\":%s,\"private_stderr_bytes\":%u,\"private_stderr_truncated\":%s,\"synthetic_identity\":true,\"audio_opened\":false,\"functionality_verified\":false}\n",
+    char admission[96]={0};if(sdk_dual)snprintf(admission,sizeof(admission),",\"source_channels\":2,\"source_admission_checks\":%u",admission_checks);
+    printf("{\"event\":\"sdk-bus-diagnostic\",\"role\":\"%s\",\"boundary_ok\":%s,\"exec_verified\":%s,\"binding_mapped\":%s,\"drained\":%s,\"threads\":%u,\"syscalls\":%u,\"denied\":%u,\"socket_attempts\":%u,\"lost_registers\":%u,\"bounded_stop\":%s,\"exit_code\":%d,\"exit_signal\":%d,\"private_objects_mask\":%u,\"path_control\":%s,\"private_stderr_bytes\":%u,\"private_stderr_truncated\":%s,\"synthetic_identity\":true,\"audio_opened\":false,\"functionality_verified\":false%s}\n",
         role?"platform":"own-elf",good?"true":"false",result.verified?"true":"false",result.binding_seen?"true":"false",result.drained?"true":"false",result.threads,result.entries,result.denied,result.sockets,result.lost_registers,result.bounded?"true":"false",
-        WIFEXITED(result.status)?WEXITSTATUS(result.status):-1,WIFSIGNALED(result.status)?WTERMSIG(result.status):0,objects,result.path_control?"true":"false",log_bytes,truncated?"true":"false");fflush(stdout);
+        WIFEXITED(result.status)?WEXITSTATUS(result.status):-1,WIFSIGNALED(result.status)?WTERMSIG(result.status):0,objects,result.path_control?"true":"false",log_bytes,truncated?"true":"false",admission);fflush(stdout);
     return good?0:-1;
 }
-static int finish_sdk_relay(struct relay_handle *handle,unsigned role){
+static int finish_sdk_relay(struct relay_handle *handle,unsigned role,unsigned slot){
     struct relay_report report={0};int received=handle->pid>=2&&!full(handle->report,&report,sizeof(report));
     if(handle->report>=0)close(handle->report);int status=0;pid_t done=-1;
     if(handle->pid>=2)do{done=waitpid(handle->pid,&status,0);}while(done<0&&errno==EINTR);
@@ -1028,13 +1087,13 @@ static int finish_sdk_relay(struct relay_handle *handle,unsigned role){
     int traffic=report.stats.read_bytes[0]>0&&report.stats.read_bytes[1]>0&&report.stats.written_bytes[0]>0&&report.stats.written_bytes[1]>0;
     if(!role&&(!traffic||report.stats.result!=RELAY_EOF||report.stats.origin!=BUS_CLIENT))good=0;
     if(rmdir(handle->root))good=0;handle->pid=-1;
-    printf("{\"event\":\"sdk-bus-relay\",\"role\":\"%s\",\"boundary_ok\":%s,\"actor_checks\":%u,\"result\":%d,\"origin\":%d,\"protocol_traffic\":%s,\"auth_verified\":%s}\n",
-        role?"platform":"own-elf",good?"true":"false",report.checks,report.stats.result,report.stats.origin,traffic?"true":"false",report.stats.authenticated?"true":"false");fflush(stdout);return good?0:-1;
+    printf("{\"event\":\"sdk-bus-relay\",\"role\":\"%s\",\"boundary_ok\":%s,\"actor_checks\":%u,\"result\":%d,\"origin\":%d,\"protocol_traffic\":%s,\"auth_verified\":%s%s}\n",
+        role?"platform":"own-elf",good?"true":"false",report.checks,report.stats.result,report.stats.origin,traffic?"true":"false",report.stats.authenticated?"true":"false",sdk_dual?(slot?",\"slot\":1":",\"slot\":0"):"");fflush(stdout);return good?0:-1;
 }
-static int sdk_bus_epoch(const char *base,const char *own,const char *server_binding,const char *client_binding,unsigned role){
-    char root[PATH_MAX];struct sockaddr_un endpoint={.sun_family=AF_UNIX};int reload[2];
-    if(snprintf(root,sizeof(root),"%s/root%u",base,role)>=(int)sizeof(root)||mkdir(root,0700)||
-        snprintf(endpoint.sun_path,sizeof(endpoint.sun_path),"%s/listener%u",base,role)>=(int)sizeof(endpoint.sun_path))return -1;
+static int sdk_bus_epoch(const char *base,const char *own,const char *server_binding,const char *client_binding,unsigned role,int policy_only){
+    unsigned directory=policy_only?2:role;char root[PATH_MAX];struct sockaddr_un endpoint={.sun_family=AF_UNIX};int reload[2];
+    if(snprintf(root,sizeof(root),"%s/root%u",base,directory)>=(int)sizeof(root)||mkdir(root,0700)||
+        snprintf(endpoint.sun_path,sizeof(endpoint.sun_path),"%s/listener%u",base,directory)>=(int)sizeof(endpoint.sun_path))return -1;
     int listener=socket(AF_UNIX,SOCK_STREAM|SOCK_CLOEXEC|SOCK_NONBLOCK,0);
     if(listener<0||bind(listener,(struct sockaddr *)&endpoint,sizeof(endpoint))||listen(listener,4)||socketpair(AF_UNIX,SOCK_STREAM|SOCK_CLOEXEC,0,reload))return -1;
     int logs[2];if(pipe2(logs,O_CLOEXEC))return -1;pid_t parent=getpid(),bus=fork();if(bus<0)return -1;
@@ -1059,46 +1118,73 @@ static int sdk_bus_epoch(const char *base,const char *own,const char *server_bin
     }
     close(logs[1]);int status=0;pid_t done;do{done=waitpid(bus,&status,WUNTRACED);}while(done<0&&errno==EINTR);
     int good=done==bus&&WIFSTOPPED(status)&&WSTOPSIG(status)==SIGSTOP&&private_view(bus,listener,reload,1,0);check(good);
-    struct relay_handle relay={.pid=-1,.report=-1};struct sdk_match_observer observer={.fd=-1};struct sdk_empty_provider provider={.fd=-1};
+    struct relay_handle relay[2]={{.pid=-1,.report=-1},{.pid=-1,.report=-1}};struct sdk_match_observer observer={.fd=-1};struct sdk_empty_provider provider={.fd=-1};
     if(good){
         if(kill(bus,SIGCONT))good=0;
         char path[80];struct stat expected,actual;snprintf(path,sizeof(path),"/proc/%ld/exe",(long)bus);int ready=0;
         if(!stat("/usr/bin/dbus-daemon",&expected))for(unsigned i=0;i<300;++i){if(!stat(path,&actual)&&actual.st_dev==expected.st_dev&&actual.st_ino==expected.st_ino){ready=1;break;}struct timespec pause={0,10000000};nanosleep(&pause,NULL);}
         if(!ready||!private_view(bus,listener,reload,0,0))good=0;
-        if(good&&role&&sdk_bluez&&provider_open(endpoint.sun_path,&provider))good=0;
-        if(good&&(!role?subscription_policy(endpoint.sun_path,&observer,sdk_bluez?&provider:NULL):observer_open(endpoint.sun_path,&observer,sdk_bluez?&provider:NULL)))good=0;
-        int backend=good?connect_bus(endpoint.sun_path):-1;int client=backend>=0?start_relay(root,own,backend,&relay):-1;
-        if(client<0)good=0;else if(run_sdk(base,root,own,client_binding,client,role,&observer,sdk_bluez?&provider:NULL))good=0;
-        if(relay.pid>=2&&finish_sdk_relay(&relay,role))good=0;
+        if(good&&!policy_only&&(role||sdk_dual)&&sdk_bluez&&provider_open(endpoint.sun_path,&provider))good=0;
+        if(good&&((policy_only||(!role&&!sdk_dual))?subscription_policy(endpoint.sun_path,&observer,sdk_bluez?&provider:NULL):observer_open(endpoint.sun_path,&observer,sdk_bluez?&provider:NULL)))good=0;
+        int clients[2]={-1,-1};unsigned streams=sdk_dual?2:1;
+        if(!policy_only){
+            for(unsigned i=0;good&&i<streams;++i){char channel_root[PATH_MAX];const char *relay_base=root;
+                if(sdk_dual){int n=snprintf(channel_root,sizeof(channel_root),"%s-channel%u",root,i);if(n<0||n>=(int)sizeof(channel_root)){good=0;break;}relay_base=channel_root;}
+                int backend=connect_bus(endpoint.sun_path);clients[i]=backend>=0?start_relay(relay_base,own,backend,&relay[i]):-1;
+                if(clients[i]<0)good=0;
+            }
+            if(good){if(run_sdk(base,root,own,client_binding,clients[0],clients[1],role,&observer,sdk_bluez?&provider:NULL))good=0;clients[0]=clients[1]=-1;}
+            for(unsigned i=0;i<streams;++i){if(clients[i]>=3)close(clients[i]);if(relay[i].pid>=2&&finish_sdk_relay(&relay[i],role,i))good=0;}
+        }
         if(sdk_bluez){
             if(provider.fd>=3&&provider_close(&provider))good=0;
-            if(!provider.owned||!provider.closed||provider.calls<1||provider.calls>4||(!role&&provider.calls!=1))good=0;
-            printf("{\"event\":\"%s\",\"role\":\"%s\",\"primary_owner\":%s,\"calls\":%u,\"closed\":%s,\"%s\":true,\"hardware_opened\":false}\n",
-                sdk_bluez==2?"sdk-adapter-provider":"sdk-empty-provider",role?"platform":"own-elf",provider.owned?"true":"false",provider.calls,provider.closed?"true":"false",sdk_bluez==2?"synthetic_adapter":"empty_tree_only");fflush(stdout);
+            if(!provider.owned||!provider.closed||(!policy_only&&(provider.calls<1||provider.calls>4||(!role&&provider.calls!=1))))good=0;
+            if(!policy_only){printf("{\"event\":\"%s\",\"role\":\"%s\",\"primary_owner\":%s,\"calls\":%u,\"closed\":%s,\"%s\":true,\"hardware_opened\":false}\n",
+                sdk_bluez==2?"sdk-adapter-provider":"sdk-empty-provider",role?"platform":"own-elf",provider.owned?"true":"false",provider.calls,provider.closed?"true":"false",sdk_bluez==2?"synthetic_adapter":"empty_tree_only");fflush(stdout);}
         }
         if(observer.fd>=3){
-            if(good&&(observer_after_sdk(&observer)||observer_save(base,role,&observer)))good=0;
+            if(sdk_dual){
+                if(observer_after_sdk(&observer,policy_only))good=0;
+                else if(good&&!policy_only&&observer_save(base,role,&observer))good=0;
+            }else if(good&&(observer_after_sdk(&observer,policy_only)||(!policy_only&&observer_save(base,role,&observer))))good=0;
             if(observer_close(&observer))good=0;
-            if(!role){++subscription_checks;subscription_observer_closed=observer.closed;}
+            if(policy_only||(!role&&!sdk_dual)){++subscription_checks;subscription_observer_closed=observer.closed;}
         }
-        int fixture_match=!role&&observer.captured==2&&match_contains(&observer.peak,own_match_rules[0])&&match_contains(&observer.peak,own_match_rules[1]);
-        if(!observer.captured||!observer.post_absent||!observer.closed||(!role&&!fixture_match))good=0;
-        printf("{\"event\":\"sdk-match-observer\",\"role\":\"%s\",\"snapshot_captured\":%s,\"own_fixture_match\":%s,\"sdk_subscription_removed\":%s,\"observer_closed\":%s,\"queries\":%u,\"peak_rules\":%u,\"private_metadata_only\":true}\n",
-            role?"platform":"own-elf",observer.captured?"true":"false",fixture_match?"true":"false",observer.post_absent?"true":"false",observer.closed?"true":"false",observer.queries,observer.captured);fflush(stdout);
+        if(!policy_only){
+            int fixture_match=!role&&observer.captured==2&&match_contains(&observer.peak,own_match_rules[0])&&match_contains(&observer.peak,own_match_rules[1]);
+            if(sdk_dual){unsigned known=0;
+                for(unsigned i=0;i<observer.names.count;++i){const struct private_match_entry *entry=&observer.names.peak[i];
+                    if(entry->rules==2&&match_contains(entry,own_match_rules[0])&&match_contains(entry,own_match_rules[1]))known|=1;
+                    if(entry->rules==1&&match_contains(entry,own_second_rule))known|=2;
+                }fixture_match=!role&&observer.names.count==2&&known==3;
+            }
+            if(!observer.captured||!observer.post_absent||!observer.closed||(!role&&!fixture_match)||(sdk_dual&&observer.names.count!=2))good=0;
+            printf("{\"event\":\"%s\",\"role\":\"%s\",\"snapshot_captured\":%s,\"own_fixture_match\":%s,\"sdk_subscription_removed\":%s,\"observer_closed\":%s,\"queries\":%u,\"peak_rules\":%u,\"private_metadata_only\":true",
+                sdk_dual?"sdk-group-observer":"sdk-match-observer",role?"platform":"own-elf",observer.captured?"true":"false",fixture_match?"true":"false",observer.post_absent?"true":"false",observer.closed?"true":"false",observer.queries,observer.captured);
+            if(sdk_dual)printf(",\"sdk_names\":%u,\"active_names\":%u,\"group_finished\":%s",observer.names.count,observer.names.active,observer.names.finished?"true":"false");
+            printf("}\n");fflush(stdout);
+        }
         if(kill(bus,SIGTERM))good=0;
         do{done=waitpid(bus,&status,0);}while(done<0&&errno==EINTR);
         if(done!=bus||!WIFEXITED(status)||WEXITSTATUS(status))good=0;
     }else if(done==bus&&WIFSTOPPED(status)){kill(bus,SIGKILL);waitpid(bus,&status,0);}
     char private_log[8192],path[PATH_MAX];size_t size=0;ssize_t got;
     while(size<sizeof(private_log)&&(got=read(logs[0],private_log+size,sizeof(private_log)-size))>0)size+=(size_t)got;close(logs[0]);
-    if(snprintf(path,sizeof(path),"%s/sdk%u-bus-stderr.private.txt",base,role)>=(int)sizeof(path))good=0;
+    if(snprintf(path,sizeof(path),"%s/sdk%u-bus-stderr.private.txt",base,directory)>=(int)sizeof(path))good=0;
     else{int log=open(path,O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);if(log<0)good=0;else{if(store_write_all(log,private_log,size))good=0;if(close(log))good=0;}}
-    close(listener);close(reload[0]);close(reload[1]);if(unlink(endpoint.sun_path)||rmdir(root))good=0;
+    close(listener);close(reload[0]);close(reload[1]);if(unlink(endpoint.sun_path))good=0;
+    int released=!rmdir(root);if(!released)good=0;
+    if(policy_only){
+        int reaped=done==bus&&WIFEXITED(status)&&!WEXITSTATUS(status);
+        printf("{\"event\":\"sdk-policy-epoch\",\"ok\":%s,\"checks\":%u,\"provider_closed\":%s,\"observer_only\":%s,\"observer_closed\":%s,\"bus_reaped\":%s,\"private_view_released\":%s}\n",
+            good?"true":"false",subscription_checks,provider.closed?"true":"false",observer.post_absent?"true":"false",observer.closed?"true":"false",reaped?"true":"false",released?"true":"false");fflush(stdout);
+    }
     return good?0:-1;
 }
 static int sdk_bus_coordinator(const char *base,const char *own,const char *server,const char *client){
     pid_t parent=getppid();if(parent<=1||prctl(PR_SET_PDEATHSIG,SIGKILL)||getppid()!=parent)return 2;alarm(40);
-    for(unsigned role=0;role<2;++role)if(sdk_bus_epoch(base,own,server,client,role))return 2;
+    if(sdk_dual&&sdk_bus_epoch(base,own,server,client,0,1))return 2;
+    for(unsigned role=0;role<2;++role)if(sdk_bus_epoch(base,own,server,client,role,0))return 2;
     if(!subscription_ok||!subscription_observer_closed||subscription_checks!=(sdk_bluez?29u:26u))return 2;
     printf("{\"event\":\"sdk-subscription-policy\",\"checks\":%u,\"failures\":0,\"driver_signal_received\":true,\"peer_signal_blocked\":true,\"rule_limit\":4,\"connections_closed\":true,\"own_controls_only\":true}\n",subscription_checks);
     printf("{\"selftest\":\"sdk-private-bus\",\"ok\":true,\"sdk_executed\":true,\"audio_opened\":false,\"functionality_verified\":false}\n");fflush(stdout);return 0;
@@ -1187,11 +1273,11 @@ static int coordinator(const char *base,const char *executable,const char *bindi
 }
 int main(int argc,char **argv){
     if(argc==2&&!strcmp(argv[1],"--actor"))return own_actor();
-    if((argc==4&&!strcmp(argv[1],"--sdk-control"))||(argc==5&&(!strcmp(argv[1],"--sdk-bluez-control")||!strcmp(argv[1],"--sdk-adapter-control")))){
+    if((argc==4&&!strcmp(argv[1],"--sdk-control"))||(argc==5&&(!strcmp(argv[1],"--sdk-bluez-control")||!strcmp(argv[1],"--sdk-adapter-control")||!strcmp(argv[1],"--sdk-two-control")))){
         long values[2];for(unsigned i=0;i<2;++i){char *end;values[i]=strtol(argv[i+2],&end,10);if(*end||values[i]<3||values[i]>INT_MAX)return 2;}
         if(getppid()!=values[1])return 2;
         if(argc==5&&!empty_objects_name_size(argv[4]))return 2;
-        return sdk_bus_control((int)values[0],(pid_t)values[1],argc==5?argv[4]:NULL,!strcmp(argv[1],"--sdk-adapter-control"));
+        return sdk_bus_control((int)values[0],(pid_t)values[1],argc==5?argv[4]:NULL,!strcmp(argv[1],"--sdk-adapter-control")||!strcmp(argv[1],"--sdk-two-control"),!strcmp(argv[1],"--sdk-two-control"));
     }
     if(argc==7&&!strcmp(argv[1],"--client-actor")){
         long values[5];for(unsigned i=0;i<5;++i){char *end;values[i]=strtol(argv[i+2],&end,10);if(*end||values[i]<(i==4?1:3)||values[i]>INT_MAX)return 2;}
@@ -1203,8 +1289,8 @@ int main(int argc,char **argv){
         if(values[0]==values[1]||values[0]==values[2]||values[1]==values[2]||getppid()!=values[3])return 2;
         return relay_actor((int)values[0],(int)values[1],(int)values[2],(pid_t)values[3]);
     }
-    if(argc!=5||(strcmp(argv[1],"--run")&&strcmp(argv[1],"--run-sdk")&&strcmp(argv[1],"--run-sdk-bluez")&&strcmp(argv[1],"--run-sdk-adapter"))||getuid()||geteuid()||getgid()||getegid())return 2;
-    sdk_bluez=!strcmp(argv[1],"--run-sdk-adapter")?2:!strcmp(argv[1],"--run-sdk-bluez");int sdk=sdk_bluez||!strcmp(argv[1],"--run-sdk");
+    if(argc!=5||(strcmp(argv[1],"--run")&&strcmp(argv[1],"--run-sdk")&&strcmp(argv[1],"--run-sdk-bluez")&&strcmp(argv[1],"--run-sdk-adapter")&&strcmp(argv[1],"--run-sdk-two"))||getuid()||geteuid()||getgid()||getegid())return 2;
+    sdk_dual=!strcmp(argv[1],"--run-sdk-two");sdk_bluez=(sdk_dual||!strcmp(argv[1],"--run-sdk-adapter"))?2:!strcmp(argv[1],"--run-sdk-bluez");int sdk=sdk_bluez||!strcmp(argv[1],"--run-sdk");
     if(sdk){
         char pattern[1024];int fd=open("/proc/sys/kernel/core_pattern",O_RDONLY|O_NOFOLLOW|O_CLOEXEC);if(fd<0)return 2;
         ssize_t count=read(fd,pattern,sizeof(pattern));int closed=close(fd);

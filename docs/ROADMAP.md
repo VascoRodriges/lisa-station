@@ -286,4 +286,11 @@ ownership/admission, separate relay lifecycles and retirement remain required.
 The [two-name SDK group ledger](SDK_NAME_LEDGER.md) now qualifies peak-rule
 tracking, permanent name retirement and final observer-only reconciliation.
 It does not map a bus name to a socket slot, admit channels or authenticate
-roles; exclusive source/relay ownership and actual two-stream integration remain.
+roles; the coordinator must separately prove source/relay ownership.
+
+The [explicit dual-channel diagnostic](DUAL_SDK_CHANNELS.md) now composes that
+integration, with a separate policy epoch, exact two-source admission, independent
+sealed relays and finished two-name ledgers. Both real SDK connections authenticate
+and reach EOF; further service-name ownership is denied pending attribution.
+The existing resource bounds and kernel endpoint denial remain; production mode,
+cloud policy, actual hardware/queues and the voice/HA phases are still pending.

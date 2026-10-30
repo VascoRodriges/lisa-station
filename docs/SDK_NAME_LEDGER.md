@@ -1,8 +1,9 @@
 # Two-name SDK group ledger
 
 `sdk_name_ledger.h` qualifies the pure metadata bookkeeping needed for two
-independent SDK streams. It is not yet called by the live SDK coordinator and
-does not admit another channel or change runtime policy.
+independent SDK streams. The subsequent [two-channel diagnostic](DUAL_SDK_CHANNELS.md)
+now calls it within explicit source/relay admission. The ledger itself admits
+no channel and grants no runtime permission.
 
 A bus unique name identifies a connection, while the current cached kernel peer
 identifies the common creator. The ledger therefore tracks names belonging to
@@ -41,8 +42,7 @@ unchanged state on failure. Each malformed snapshot starts from an independently
 accepted valid baseline. CI runs the host fixture; it also compiles for ARM.
 The existing 45-target device matrix and 1614 Python/HA tests are unchanged.
 
-Actual two-stream SDK descriptor admission, independent relay roots/stamps,
-policy/SDK epoch separation, callback integration and full queue retirement are
-still required. The current live SDK is still supplied one channel and refuses
-another. No production switching, Bluetooth operation, host bus or microphone
-access is introduced by this component.
+The explicit two-channel lab now composes descriptor admission, independent relay
+roots/stamps, separate policy/SDK epochs and callback/retirement verification.
+Other modes retain one source. Production switching, real Bluetooth operation,
+host-bus access and microphone access remain outside this component.

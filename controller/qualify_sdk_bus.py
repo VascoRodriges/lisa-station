@@ -40,10 +40,10 @@ def allocation_diagnostic(data, *, truncated=False):
     return dict(kind="unobserved")
 
 
-def diagnostic_script(*, empty_bluez=False, synthetic_adapter=False):
-    if empty_bluez and synthetic_adapter:
+def diagnostic_script(*, empty_bluez=False, synthetic_adapter=False, dual_channels=False):
+    if sum((bool(empty_bluez), bool(synthetic_adapter), bool(dual_channels))) > 1:
         raise ValueError("choose one explicit service fixture")
-    mode = "--run-sdk-adapter" if synthetic_adapter else "--run-sdk-bluez" if empty_bluez else "--run-sdk"
+    mode = "--run-sdk-two" if dual_channels else "--run-sdk-adapter" if synthetic_adapter else "--run-sdk-bluez" if empty_bluez else "--run-sdk"
     script = BUS_SCRIPT.replace("PROBE --run ", f"PROBE {mode} ")
     # The same owned-PID watchdog also watches the SDK family leader. Its
     # descendants inherit PDEATH/ptrace EXITKILL; no stock process is targeted.
@@ -64,16 +64,63 @@ def diagnostic_script(*, empty_bluez=False, synthetic_adapter=False):
             ]
         )
         script = script.replace(before, extra + "\n" + before)
+    if dual_channels:
+        for prefix in ["STATE", "state"]:
+            before = f'"${prefix}"/root[012]-relay.child'
+            script = script.replace(before, before + f' "${prefix}"/root[012]-channel[01]-relay.child')
+            before = f'        [ ! -d "${prefix}/root$epoch-relay" ]'
+            extra = "\n".join([
+                '        for channel in 0 1; do',
+                f'            [ ! -d "${prefix}/root$epoch-channel$channel-relay" ] || rmdir "${prefix}/root$epoch-channel$channel-relay"',
+                f'            [ ! -f "${prefix}/root$epoch-channel$channel-relay.child" ] || rm "${prefix}/root$epoch-channel$channel-relay.child"',
+                '        done',
+            ])
+            script = script.replace(before, extra + "\n" + before)
     return script.replace(
         "remaining\nprintf '%s %s %s",
         "remaining\nprintf '{\"event\":\"sdk-bus-state\",\"path\":\"%s\"}\\n' \"$STATE\"\nprintf '%s %s %s",
     )
 
 
-def evaluate_events(events, *, empty_bluez=False, synthetic_adapter=False):
+def evaluate_events(events, *, empty_bluez=False, synthetic_adapter=False, dual_channels=False):
     """Require SDK boundary, real EXTERNAL authentication and complete teardown."""
-    if empty_bluez and synthetic_adapter:
+    if sum((bool(empty_bluez), bool(synthetic_adapter), bool(dual_channels))) > 1:
         return False
+    if dual_channels:
+        if type(events) is not list or len(events) != 16 or any(type(e) is not dict for e in events):
+            return False
+        policy = dict(event="sdk-policy-epoch", ok=True, checks=29, provider_closed=True,
+                      observer_only=True, observer_closed=True, bus_reaped=True, private_view_released=True)
+        if events[0] != policy or any(type(events[0].get(k)) is not type(v) for k, v in policy.items()):
+            return False
+        variants = [[], []]
+        for start, role in [(1, "own-elf"), (6, "platform")]:
+            diagnostic = events[start]
+            if type(diagnostic.get("source_channels")) is not int or diagnostic["source_channels"] != 2:
+                return False
+            if type(diagnostic.get("source_admission_checks")) is not int or diagnostic["source_admission_checks"] != (5 if role == "own-elf" else 0):
+                return False
+            diagnostic = dict(diagnostic)
+            del diagnostic["source_channels"]
+            del diagnostic["source_admission_checks"]
+            observer = dict(events[start + 4])
+            required = dict(event="sdk-group-observer", sdk_names=2, active_names=0, group_finished=True)
+            if any(type(observer.get(k)) is not type(v) or observer[k] != v for k, v in required.items()):
+                return False
+            if type(observer.get("peak_rules")) is not int or not 1 <= observer["peak_rules"] <= 8 or (role == "own-elf" and observer["peak_rules"] != 3):
+                return False
+            for key in ["sdk_names", "active_names", "group_finished"]:
+                del observer[key]
+            observer.update(event="sdk-match-observer", peak_rules=2)
+            for slot in [0, 1]:
+                relay = events[start + 1 + slot]
+                if type(relay.get("slot")) is not int or relay["slot"] != slot:
+                    return False
+                relay = dict(relay)
+                del relay["slot"]
+                variants[slot].extend([diagnostic, relay, events[start + 3], observer])
+        # Apply every existing typed boundary/auth/EOF check to EACH relay.
+        return all(evaluate_events(rows + events[11:], synthetic_adapter=True) for rows in variants)
     if empty_bluez or synthetic_adapter:
         if type(events) is not list or len(events) != 13 or any(type(e) is not dict for e in events):
             return False
@@ -168,6 +215,7 @@ def main():
     service = parser.add_mutually_exclusive_group()
     service.add_argument("--empty-bluez", action="store_true", help="Explicit empty ObjectManager lab; no Bluetooth hardware")
     service.add_argument("--synthetic-adapter", action="store_true", help="One synthetic offline Adapter1; no real Bluetooth hardware")
+    service.add_argument("--dual-channels", action="store_true", help="Two independent SDK streams after a separate policy epoch")
     args = parser.parse_args()
     if args.host.startswith("-"):
         parser.error("SSH alias required")
@@ -199,11 +247,11 @@ def main():
     identity = "pidof dbus-daemon quasar_launcher2 maind alsa-audio-monitord hardvold chronyd unbound; cat /proc/sys/kernel/random/boot_id; sha256sum /etc/init.d/rcS /etc/init.d/S99zdropbear /etc/chrony.conf /etc/unbound/unbound.conf /etc/resolv.conf"
     before = remote(identity, check=True).stdout
     firewall = remote("iptables-save; ip6tables-save", check=True).stdout
-    script = diagnostic_script(empty_bluez=args.empty_bluez, synthetic_adapter=args.synthetic_adapter).replace("PROBE", resolved[0]).replace("FACTORY", resolved[1]).replace("CLIENT_LIBRARY", resolved[2])
+    script = diagnostic_script(empty_bluez=args.empty_bluez, synthetic_adapter=args.synthetic_adapter, dual_channels=args.dual_channels).replace("PROBE", resolved[0]).replace("FACTORY", resolved[1]).replace("CLIENT_LIBRARY", resolved[2])
     result = remote("sh -s", input=script.encode())
     after = remote(identity, check=True).stdout
     after_firewall = remote("iptables-save; ip6tables-save", check=True).stdout
-    report_name = "sdk-adapter-bus" if args.synthetic_adapter else "sdk-bluez-bus" if args.empty_bluez else "sdk-bus"
+    report_name = "sdk-two-bus" if args.dual_channels else "sdk-adapter-bus" if args.synthetic_adapter else "sdk-bluez-bus" if args.empty_bluez else "sdk-bus"
     (root / f"build/{report_name}.stdout.private.txt").write_bytes(result.stdout)
     (root / f"build/{report_name}.stderr.private.txt").write_bytes(result.stderr)
     events = [json.loads(line) for line in result.stdout.decode().splitlines()]
@@ -216,7 +264,7 @@ def main():
         for role in range(2):
             for suffix in ["stderr", "paths", "bus-stderr", "match"]:
                 name = f"sdk{role}-{suffix}.private.txt"
-                local_name = "adapter-" + name if args.synthetic_adapter else "bluez-" + name if args.empty_bluez else name
+                local_name = "two-" + name if args.dual_channels else "adapter-" + name if args.synthetic_adapter else "bluez-" + name if args.empty_bluez else name
                 saved = remote("test ! -L " + state + "/" + name + " && head -c 65536 " + state + "/" + name)
                 if saved.returncode == 0:
                     (root / "build" / local_name).write_bytes(saved.stdout)
@@ -229,14 +277,14 @@ def main():
     report = dict(
         binary_sha256=digests[0], binding_sha256=digests[1], client_binding_sha256=digests[2],
         returncode=result.returncode, events=events,
-        qualified=result.returncode == 0 and evaluate_events(events, empty_bluez=args.empty_bluez, synthetic_adapter=args.synthetic_adapter),
+        qualified=result.returncode == 0 and evaluate_events(events, empty_bluez=args.empty_bluez, synthetic_adapter=args.synthetic_adapter, dual_channels=args.dual_channels),
         stock_identity_and_configs_preserved=before == after,
         firewall_unchanged=rules_only(firewall) == rules_only(after_firewall),
         audio_captured=False, sdk_executed=any(e.get("event") == "sdk-bus-diagnostic" and e.get("role") == "platform" and e.get("exec_verified") is True for e in events),
         host_bus_forwarded=False, production_mode_changed=False,
         isolation_verified=False, functionality_verified=False,
     )
-    prefix = "adapter-" if args.synthetic_adapter else "bluez-" if args.empty_bluez else ""
+    prefix = "two-" if args.dual_channels else "adapter-" if args.synthetic_adapter else "bluez-" if args.empty_bluez else ""
     log = root / "build" / f"{prefix}sdk1-stderr.private.txt"
     diagnostic = next((event for event in events if event.get("event") == "sdk-bus-diagnostic" and event.get("role") == "platform"), {})
     report["allocation_diagnostic"] = allocation_diagnostic(
