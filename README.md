@@ -152,6 +152,9 @@ The [two-name group ledger](docs/SDK_NAME_LEDGER.md) now qualifies metadata
 retirement without name reuse. Source-object admission and relay ownership are
 separate obligations of the coordinator.
 
+The [bounded private error-text decoder](docs/PRIVATE_ERROR_TEXT.md) prepares
+the next denied-name audit, without changing any bus permission.
+
 The [explicit two-channel SDK diagnostic](docs/DUAL_SDK_CHANNELS.md) now composes
 those ownership and retirement checks. Both SDK connections authenticate and
 close through separate relays; the next denied dependency is service-name

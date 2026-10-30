@@ -126,6 +126,8 @@ jobs:
             python3 -m controller.qualify_adapter_objects_wire ./build/adapter-objects-host
             cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/sdk_ledger_probe.c -o build/sdk-ledger-host
             ./build/sdk-ledger-host --selftest
+            cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/error_text_probe.c -o build/error-text-host
+            ./build/error-text-host --selftest
           cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/bus_relay_probe.c -o build/bus-relay-host
           ./build/bus-relay-host --selftest
           cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror -shared -fPIC controller/private_bus_factory.c -o build/private-bus-factory-host.so

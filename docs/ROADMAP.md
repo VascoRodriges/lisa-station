@@ -294,3 +294,9 @@ sealed relays and finished two-name ledgers. Both real SDK connections authentic
 and reach EOF; further service-name ownership is denied pending attribution.
 The existing resource bounds and kernel endpoint denial remain; production mode,
 cloud policy, actual hardware/queues and the voice/HA phases are still pending.
+
+The [bounded private error-text decoder](PRIVATE_ERROR_TEXT.md) now qualifies
+the exact one-string body needed to attribute that denied service-name request.
+Its 2106 synthetic checks include fortified and sanitizer runs. It changes no
+bus policy and has no live connection; the explicit private driver-error audit
+and subsequent ownership review remain the next steps.
