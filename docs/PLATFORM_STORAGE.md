@@ -50,7 +50,7 @@ copies and absence of leaked host file/directory descriptors. Root IPv4/IPv6
 loopback controls worked throughout. Releasing the final directory references
 completed the synthetic lifecycle.
 
-The trial passed **188 storage checks**. **50 seed checks** passed on the speaker
+The trial passed **192 storage checks**. **50 seed checks** passed on the speaker
 and a fortified Linux host, including unsafe permissions, hard links, symlinks,
 FIFOs/directories, oversized/empty identity inputs, nonempty markers, restrictive
 caller umask and deterministic replacement of a pinned input during copying.
@@ -61,12 +61,12 @@ loss; the shared trial lock is released only for its matching ownership token.
 Stock process identities, boot/configuration and firewall rules were unchanged.
 No audio, real identity data or proprietary process was involved.
 
-Ruff, the public-source check and **1237 Python/HA tests** passed. The build matrix
-now has **39 native targets**, including the storage probe and its host seed checks.
+Ruff, the public-source check and **1398 Python/HA tests** passed. The build matrix
+now has **45 native targets**, including the storage probe and its host seed checks.
 
 Qualified ARM SHA256:
 
-`a35c771ca26d68cc217502a1015ce2d4f97dc9c63d662579890ba06b02f42c9a`
+`e8ef5f9b3c1a47f4b6d07166a1e0a22e62dde500b2b24a8378d78b250939d0e8`
 
 ```sh
 python controller/build.py --target platform-storage-probe
@@ -76,8 +76,11 @@ python -m controller.qualify_platform_storage YOUR_SPEAKER_SSH_ALIAS \
 
 ## Remaining boundary
 
-The storage foundation is not yet used by the real platform/media SDK or the
-permanent speech service. It does not demonstrate SDK batch materialization,
+The [audio-free SDK diagnostic](PLATFORM_SDK_DIAGNOSTIC.md) uses this foundation,
+with explicit compatibility failures. The [own-client binding variant](PRIVATE_CLIENT_BINDING.md)
+now adds a pinned read-only preload inside the private filesystem; default calls
+still expose neither `/opt` nor the binding marker. Functional SDK and permanent
+speech-service composition remain unfinished. It does not demonstrate SDK batch materialization,
 hardware/audio compatibility, complete receiver/IPC isolation or production mode
 switching. Existing collector/telemetry DATA exposure also requires review rather
 than being treated as safe merely because it is read-only.

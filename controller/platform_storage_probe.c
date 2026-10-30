@@ -112,7 +112,7 @@ static int actor(int report,int control,const char *canary){
     if(failures){if(directory>=0)close(directory);return 2;}
     check(equal(directory,"account_storage.dat","synthetic-identity\n")&&equal(directory,"gsdkTokens.json","{}\n"));
     const char *absent[]={"/proc/1/root","/proc/self/fd","/proc/cmdline","/sys","/bkupgrade","/data/opt","/etc/shadow",
-        "/dev/snd","/dev/log","/dev/keymaster_svc","/var/run/dbus/system_bus_socket","/tmp/messages",
+        "/dev/snd","/dev/log","/dev/keymaster_svc","/var/run/dbus/system_bus_socket","/tmp/messages","/opt","/etc/lisa-client-binding",
         "/tmp/teleme3d","/data/quasar/soundLogStorageDir","/data/quasar/soundLogStorage.dat",
         "/data/quasar/data/local_events.lmdb","/data/quasar/appmetrica","/data/quasar/data/capability_states.lmdb"};
     for(unsigned i=0;i<sizeof(absent)/sizeof(absent[0]);++i)check(hidden(absent[i]));

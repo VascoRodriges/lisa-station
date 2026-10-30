@@ -26,7 +26,7 @@ remaining() {
     for entry in /proc/[0-9]*/exe; do
         [ "$(readlink "$entry" 2>/dev/null || true)" != PROBE ] || return 1
     done
-    for stamp in "$STATE"/root[012].child "$STATE"/root[012]-relay.child; do
+    for stamp in "$STATE"/root[012].child "$STATE"/root[012]-relay.child "$STATE"/root[012]-client.child; do
         [ -f "$stamp" ] || continue
         set -- $(cat "$stamp"); pid=$1; ticks=$2
         if [ "$(awk '{print $22}' /proc/"$pid"/stat 2>/dev/null || true)" = "$ticks" ]; then
@@ -54,6 +54,9 @@ cleanup() {
         [ ! -f "$STATE/root$epoch.child" ] || rm "$STATE/root$epoch.child"
         [ ! -d "$STATE/root$epoch-relay" ] || rmdir "$STATE/root$epoch-relay"
         [ ! -f "$STATE/root$epoch-relay.child" ] || rm "$STATE/root$epoch-relay.child"
+        [ ! -d "$STATE/root$epoch-client" ] || rmdir "$STATE/root$epoch-client"
+        [ ! -d "$STATE/root$epoch-client-stage" ] || rmdir "$STATE/root$epoch-client-stage"
+        [ ! -f "$STATE/root$epoch-client.child" ] || rm "$STATE/root$epoch-client.child"
         [ ! -e "$STATE/listener$epoch" ] || { [ -S "$STATE/listener$epoch" ] && rm "$STATE/listener$epoch"; }
     done
     touch "$STATE/cleaned"
@@ -76,7 +79,7 @@ nohup sh -c '
     for entry in /proc/[0-9]*/exe; do
         [ "$(readlink "$entry" 2>/dev/null || true)" != PROBE ] || exit 9
     done
-    for stamp in "$state"/root[012].child "$state"/root[012]-relay.child; do
+    for stamp in "$state"/root[012].child "$state"/root[012]-relay.child "$state"/root[012]-client.child; do
         [ -f "$stamp" ] || continue
         set -- $(cat "$stamp"); pid=$1; ticks=$2
         if [ "$(awk "{print \$22}" /proc/"$pid"/stat 2>/dev/null || true)" = "$ticks" ]; then
@@ -89,13 +92,16 @@ nohup sh -c '
         [ ! -f "$state/root$epoch.child" ] || rm "$state/root$epoch.child"
         [ ! -d "$state/root$epoch-relay" ] || rmdir "$state/root$epoch-relay"
         [ ! -f "$state/root$epoch-relay.child" ] || rm "$state/root$epoch-relay.child"
+        [ ! -d "$state/root$epoch-client" ] || rmdir "$state/root$epoch-client"
+        [ ! -d "$state/root$epoch-client-stage" ] || rmdir "$state/root$epoch-client-stage"
+        [ ! -f "$state/root$epoch-client.child" ] || rm "$state/root$epoch-client.child"
         [ ! -e "$state/listener$epoch" ] || { [ -S "$state/listener$epoch" ] && rm "$state/listener$epoch"; }
     done
     touch "$state/cleaned"
     rm /data/opt/lisa-lab/trial.lock/private-bus.owner
     rmdir /data/opt/lisa-lab/trial.lock
 ' watchdog "$STATE" </dev/null >"$STATE/watchdog.log" 2>&1 &
-PROBE --run "$STATE" FACTORY & native=$!
+PROBE --run "$STATE" FACTORY CLIENT_LIBRARY & native=$!
 printf '%s %s\n' "$native" "$(awk '{print $22}' /proc/"$native"/stat 2>/dev/null || true)" > "$STATE/native.driver"
 result=0; wait "$native" || result=$?
 printf '{"event":"private-bus-exit","code":%s}\n' "$result"
@@ -108,19 +114,21 @@ echo '{"event":"private-bus-cleanup","ok":true}'
 def evaluate_events(events):
     """Require the complete ordered boundary evidence, without claiming SDK readiness."""
     expected = [dict(event="private-bus-control", checks=15, failures=0)]
-    for i, count in enumerate([7, 32, 56]):
+    for i, count in enumerate([7, 29, 51]):
         if i:
-            expected.append(
-                dict(
-                    event="private-bus-relay",
-                    epoch=i,
-                    actor_checks=11,
-                    failures=0,
-                    result=0,
-                    origin=1 if i == 1 else 0,
-                    bounded=True,
-                )
+            relay = dict(
+                event="private-bus-relay",
+                epoch=i,
+                actor_checks=11,
+                failures=0,
+                result=0,
+                origin=1 if i == 1 else 0,
+                bounded=True,
             )
+            client = dict(
+                event="private-bus-client", epoch=i, actor_checks=26, failures=0, client_binding=True
+            )
+            expected.extend([relay, client] if i == 1 else [client, relay])
         expected.append(
             dict(
                 event="private-bus-epoch",
@@ -135,7 +143,7 @@ def evaluate_events(events):
     expected += [
         dict(
             selftest="private-bus",
-            checks=57,
+            checks=52,
             failures=0,
             ok=True,
             sdk_executed=False,
@@ -184,6 +192,7 @@ def main():
     for name, filename in [
         ("private-bus-probe", "private-bus-probe.armhf"),
         ("private-bus-factory", "private-bus-factory.so"),
+        ("unix-bus-factory", "unix-bus-factory.so"),
     ]:
         data = (root / "build" / filename).read_bytes()
         digest = hashlib.sha256(data).hexdigest()
@@ -194,12 +203,18 @@ def main():
         remote("mv " + target + ".new " + target, check=True)
         resolved.append(canonical_lab_artifact(remote, target))
         digests.append(digest)
-    target, binding = resolved
-    digest, binding_digest = digests
+    target, binding, client_binding = resolved
+    digest, binding_digest, client_digest = digests
     identity = "pidof dbus-daemon quasar_launcher2 maind alsa-audio-monitord hardvold chronyd unbound; cat /proc/sys/kernel/random/boot_id; sha256sum /etc/init.d/rcS /etc/init.d/S99zdropbear /etc/chrony.conf /etc/unbound/unbound.conf /etc/resolv.conf"
     before = remote(identity, check=True).stdout
     firewall = remote("iptables-save; ip6tables-save", check=True).stdout
-    result = remote("sh -s", input=SCRIPT.replace("PROBE", target).replace("FACTORY", binding).encode())
+    result = remote(
+        "sh -s",
+        input=SCRIPT.replace("PROBE", target)
+        .replace("FACTORY", binding)
+        .replace("CLIENT_LIBRARY", client_binding)
+        .encode(),
+    )
     after = remote(identity, check=True).stdout
     after_firewall = remote("iptables-save; ip6tables-save", check=True).stdout
     (root / "build/private-bus.stdout.private.txt").write_bytes(result.stdout)
@@ -208,6 +223,7 @@ def main():
     report = dict(
         binary_sha256=digest,
         binding_sha256=binding_digest,
+        client_binding_sha256=client_digest,
         returncode=result.returncode,
         events=events,
         qualified=result.returncode == 0 and evaluate_events(events),

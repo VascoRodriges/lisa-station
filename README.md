@@ -110,6 +110,10 @@ traffic through a separate sealed actor. Both EOF directions and descriptor
 cleanup pass in disposable speaker trials; actual SDK binding and permanent
 mode/boot/voice composition remain unfinished.
 
+The [immutable client binding](docs/PRIVATE_CLIENT_BINDING.md) now qualifies a
+separate own client beside the bus and relay in private platform storage. The
+actual SDK, permanent modes/boot/voice and HA migration remain unfinished.
+
 ## Development
 
 Use Python 3.14 on Linux in an isolated virtual environment:

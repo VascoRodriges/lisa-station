@@ -225,3 +225,9 @@ actor with actual private-bus method traffic. Host fixtures force short writes,
 backpressure and timeout/rejection paths; two speaker epochs verify client/backend
 EOF and descriptor cleanup. Actual SDK binding, full holder lifecycle and
 permanent mode/boot/voice composition remain pending.
+
+The [immutable client binding](PRIVATE_CLIENT_BINDING.md) now runs an own third
+sibling in the private platform filesystem through the actual relay/bus. Both
+EOF directions, immutable object/FD admission and default-storage absence checks
+pass. Actual SDK compatibility and normal cloud-network policy composition,
+permanent mode/boot/voice and HA migration remain unfinished.

@@ -47,9 +47,9 @@ administration rights. The existing byte-channel parent validator is unchanged.
 
 Cached SO_PEERCRED reports the creator, not the current reader after inheritance.
 The coordinator's independent executable, view and FD-object admission therefore
-matters. This trial proves daemon/relay sibling ownership with an own client in
-the coordinator. A separate SDK sibling/client-binding composition remains to be
-qualified; cached credentials alone do not prove all current holders.
+matters. The [three-sibling composition](PRIVATE_CLIENT_BINDING.md) now also qualifies
+a separate own client with its immutable binding. Actual SDK composition remains
+to be qualified; cached credentials alone do not prove all current holders.
 
 ## Evidence and remaining work
 
@@ -62,24 +62,19 @@ datagram rejection, missing SIGPIPE preparation and wrong expected parent. Rejec
 objects remain open for caller cleanup. ASan/UBSan also passed the fixture. These
 host workers have syscall guards; they are not filesystem-isolation evidence.
 
-The composed device trial passed **99 checks**: 15 controls, 57 coordinator checks,
-five outer controls and 11 checks in each of two sealed relay actors. Actual
-Hello/GetId and forbidden method controls pass through the relay. The raw second
-connection still gets AGREE_UNIX_FD, confirming the gate's effect on the relay path.
+The updated [sibling composition](PRIVATE_CLIENT_BINDING.md) passed **146 device
+checks**: 15 controls, 52 coordinator checks, five outer controls, 11 per relay
+and 26 per own client across two epochs. Actual method traffic and both EOF
+origins pass through separate clients/relays, with all actors reaped and fresh
+storage/bus epochs. This remains own-client evidence, not SDK batch materialization
+or a new parent-death crash test.
 
-In the first epoch, daemon termination causes backend EOF and relay teardown;
-a retained client alias then reaches EOF. In the second, closing all client aliases
-causes client EOF and relay teardown before daemon termination. Both actors report
-the correct EOF origin and closed descriptors, are reaped, and their private roots
-are released before the next epoch. Fresh daemon IDs differ. This is actual local
-bus/relay evidence, not SDK batch materialization or a new parent-death crash test.
+Stock identities/configuration/firewall/rootfs and unrelated root network controls
+are preserved. Ruff/public-source validation and **1398 Python/HA tests** pass.
+CI builds 45 native targets and repeats the host relay fixture. Qualified sibling
+probe SHA256:
 
-Stock identities, configuration, firewall and rootfs are preserved; unrelated root
-network controls pass. Ruff/public-source validation and **1391 Python/HA tests**
-pass. CI builds 45 native targets and repeats the host relay fixture. Qualified
-private-bus ARM probe SHA256:
-
-`4401f5c5d54f8e57f3d2ee43f18becbc2b8f1e53276fdb50820293eaef3a6e1f`
+`8ef15300b2e0ed93bd50c4ad046f3fde472035cb4af5bf49f65bcf83defe7193`
 
 The server binding is unchanged. Actual SDK immutable client binding, peer/holder
 lifetime completion, required service schemas, identity/hardware/time compatibility

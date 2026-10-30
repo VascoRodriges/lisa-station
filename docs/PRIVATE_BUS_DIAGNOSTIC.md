@@ -51,8 +51,8 @@ It limits message sizes, bytes, connections, names, matches and replies. Only
 Hello/GetId method calls are allowed in this fixture; ListNames and ReloadConfig
 return AccessDenied. This is an own-client test policy, not an SDK service schema.
 
-The speaker passed **99 checks**: 15 own-ELF syscall controls, 57 coordinator checks,
-five outer-parent checks and 11 checks in each of two sealed relay actors.
+The speaker passed **146 checks**: 15 own-ELF syscall controls, 52 coordinator checks,
+five outer-parent checks, 11 per relay and 26 per separate own client in two epochs.
 Two fresh daemon epochs authenticate and answer methods. Their generated bus identifiers differ. A retained client duplicate is
 drained to real EOF after daemon termination; the parent closes all listener,
 reload and client references before starting the next epoch. Every child is
@@ -67,10 +67,10 @@ cleanup. This stage does not add a separate crash-injection acceptance result.
 
 Qualified ARM SHA256 values:
 
-- Probe: `4401f5c5d54f8e57f3d2ee43f18becbc2b8f1e53276fdb50820293eaef3a6e1f`
+- Probe: `8ef15300b2e0ed93bd50c4ad046f3fde472035cb4af5bf49f65bcf83defe7193`
 - Binding: `7d330f59f0e62c18230408150b582163603a157810e1bbfb0d7bc126d6f1881b`
 
-Ruff, public-source validation and **1391 Python/HA tests** pass. CI builds 45 native
+Ruff, public-source validation and **1398 Python/HA tests** pass. CI builds 45 native
 targets and compiles the new binding with fortified host GCC. The actual daemon
 trial is device-only; CI neither obtains nor distributes firmware libraries.
 
@@ -86,8 +86,8 @@ client on an actual socket: it forwards the real daemon OK,
 answers negotiation locally with ERROR and sends only BEGIN to the daemon. This
 path reports `auth_gate_verified=true`. The separate raw connection still obtains
 AGREE_UNIX_FD as a control. The relay actor composes the gate with socket I/O in
-this bounded trial; a separate SDK sibling/client-binding and full holder
-lifecycle still require qualification. Small FD-count limits alone are not
+this bounded trial; the [own-client sibling/binding](PRIVATE_CLIENT_BINDING.md) is now qualified.
+Actual SDK compatibility and full holder lifecycle still require qualification. Small FD-count limits alone are not
 evidence of a byte-only authentication contract.
 
 Immutable client binding placement, actual SDK service authorization, protocol

@@ -47,7 +47,7 @@ tails, discovery/challenge, malformed replies/identities/commands, deadline and
 clock reversal, overlong input, invalid API arguments and transactional output
 backpressure. It verifies pending storage clearing after failure/close.
 
-The updated [private-bus diagnostic](PRIVATE_BUS_DIAGNOSTIC.md) passed **99 speaker
+The updated [private-bus diagnostic](PRIVATE_BUS_DIAGNOSTIC.md) passed **146 speaker
 checks** with two separate sealed relay actors. An own client pipelines a request
 on an actual socket and receives the daemon OK plus local negotiation ERROR.
 Hello/GetId and forbidden-method replies traverse the relay. A raw control
@@ -55,15 +55,16 @@ connection still obtains AGREE_UNIX_FD from the unchanged daemon. Both EOF
 origins are checked, all owned actors reaped and references closed between epochs.
 No SDK, microphone, account or host bus is connected.
 
-Ruff, public-source validation and **1391 Python/HA tests** pass. CI builds 45
+Ruff, public-source validation and **1398 Python/HA tests** pass. CI builds 45
 native targets and repeats the fortified gate and relay self-tests. The exhaustive
 split-test count above is host evidence; the actual ARM relay uses the same gate.
 
 ## Next composition
 
 The separate relay actor now supplies bounded poll I/O and descriptor ownership
-for the diagnostic. SDK sibling/client-binding, full receiver/holder lifecycle
-and production supervision remain required before product use.
+for the diagnostic. The [own-client sibling and binding](PRIVATE_CLIENT_BINDING.md) are now qualified;
+actual SDK compatibility, full receiver/holder lifecycle and production
+supervision remain required before product use.
 Actual SDK authentication variants, service schemas, private client binding,
 identity/hardware/time compatibility and production boot/mode/voice integration
 remain unfinished. This component does not install permanent mode switching.

@@ -47,7 +47,9 @@ static inline int platform_storage_boot_metadata(const char *root){
     if(close(fd))failed=1;
     return failed?-1:0;
 }
-static inline int platform_storage_enter_mode(const char *root,const char *seeds,const char *profile,const char *executable,int boot_metadata){
+/* Optional immutable own binding. Only this explicit variant exposes /opt;
+ * existing storage callers retain their previous view through the wrapper. */
+static inline int platform_storage_enter_with_binding(const char *root,const char *seeds,const char *profile,const char *executable,int boot_metadata,const char *binding){
     struct stat info;int source=-1,destination=-1,failed=1;char target[PATH_MAX];
     if((boot_metadata!=0&&boot_metadata!=1)||lstat(root,&info)||!S_ISDIR(info.st_mode)||info.st_uid||(info.st_mode&07777)!=0700)return -1;
     source=open(seeds,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);
@@ -68,6 +70,10 @@ static inline int platform_storage_enter_mode(const char *root,const char *seeds
         platform_storage_bind_file(root,profile,"/system/vendor/quasar/quasar.cfg",0)||
         platform_storage_bind_file(root,executable,"/system/vendor/quasar/maind",1)||
         diagnostics_bind(root,"/dev/null","/dev/null",1,1)||diagnostics_bind(root,"/dev/urandom","/dev/urandom",1,1))goto done;
+    if(binding&&(diagnostics_directory(root,"/opt")||diagnostics_directory(root,"/opt/lisa")||
+        diagnostics_text(root,"/opt/lisa/client.so","")||
+        platform_storage_bind_file(root,binding,"/opt/lisa/client.so",1)||
+        diagnostics_text(root,"/etc/lisa-client-binding","LISA_CLIENT_BINDING_V1\n")))goto done;
     const char *files[]={"/etc/hosts","/etc/resolv.conf","/etc/localtime"};
     for(unsigned i=0;i<sizeof(files)/sizeof(files[0]);++i){
         if(!stat(files[i],&info)){if(!S_ISREG(info.st_mode)||diagnostics_bind(root,files[i],files[i],1,0))goto done;}
@@ -89,6 +95,9 @@ done:
     if(source>=0)close(source);
     if(destination>=0)close(destination);
     return failed?-1:0;
+}
+static inline int platform_storage_enter_mode(const char *root,const char *seeds,const char *profile,const char *executable,int boot_metadata){
+    return platform_storage_enter_with_binding(root,seeds,profile,executable,boot_metadata,NULL);
 }
 static inline int platform_storage_enter(const char *root,const char *seeds,const char *profile,const char *executable){
     return platform_storage_enter_mode(root,seeds,profile,executable,0);

@@ -19,6 +19,7 @@
 #include "platform_worker_guard.h"
 #include "loopback_socket.h"
 #include "bus_byte_relay.h"
+#include "platform_sdk_guard.h"
 #ifndef __arm__
 #error This namespace diagnostic requires the reviewed ARM device ABI
 #endif
@@ -219,6 +220,167 @@ static int connect_bus(const char *path){
 }
 struct relay_report {struct bus_relay_stats stats;unsigned checks,failures;};
 struct relay_handle {pid_t pid;int report;char root[PATH_MAX];};
+struct client_ready {uint32_t magic;int channel;};
+struct client_report {unsigned phase,checks,failures;char guid[33];};
+struct client_handle {pid_t pid;int report,control;char root[PATH_MAX],stage[PATH_MAX];};
+static int client_equal(const char *path,const char *expected){
+    char value[64];int fd=open(path,O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC);if(fd<0)return 0;
+    ssize_t size=read(fd,value,sizeof(value));close(fd);return size==(ssize_t)strlen(expected)&&!memcmp(value,expected,(size_t)size);
+}
+static int client_eof(int fd){
+    for(unsigned i=0;i<32;++i){struct pollfd item={fd,POLLIN,0};char data[256];if(poll(&item,1,1000)!=1)return 0;
+        ssize_t size=read(fd,data,sizeof(data));if(!size)return 1;if(size<0)return 0;}
+    return 0;
+}
+static int client_actor(int source,int output,int control,pid_t parent,unsigned epoch){
+    struct statvfs fs;struct stat info;
+    if(!client_equal("/etc/lisa-platform-storage","LISA_PLATFORM_STORAGE_V1\n")||
+        !client_equal("/etc/lisa-client-binding","LISA_CLIENT_BINDING_V1\n")||
+        statvfs("/",&fs)||!(fs.f_flag&ST_RDONLY)||getgid()!=57342||
+        fstat(output,&info)||!S_ISFIFO(info.st_mode)||fstat(control,&info)||!S_ISFIFO(info.st_mode))return 9;
+    check(getppid()==parent&&prctl(PR_GET_NO_NEW_PRIVS,0,0,0,0)==1&&prctl(PR_GET_SECCOMP,0,0,0,0)==2);
+    check(unix_byte_channel_valid(source,parent));
+    errno=0;check(syscall(SYS_socket,AF_UNIX,SOCK_STREAM,0)<0&&errno==EPERM);
+    struct sockaddr_un address={.sun_family=AF_UNIX};strcpy(address.sun_path,"/var/run/dbus/system_bus_socket");
+    errno=0;check(syscall(SYS_connect,source,&address,sizeof(address))<0&&errno==EPERM);
+    struct msghdr message={0};errno=0;check(syscall(SYS_sendmsg,source,&message,0)<0&&errno==EPERM);
+    errno=0;check(syscall(SYS_recvmsg,source,&message,0)<0&&errno==EPERM);
+    errno=0;check(accept4(source,NULL,NULL,SOCK_CLOEXEC)<0&&errno==EPERM);
+    errno=0;check(fork()<0&&errno==EPERM);
+    errno=0;check(open("/opt/lisa/client.so",O_WRONLY)<0&&errno==EROFS);
+    errno=0;check(lstat("/var/run/dbus/system_bus_socket",&info)<0&&errno==ENOENT);
+    check(!statvfs("/opt/lisa/client.so",&fs)&&(fs.f_flag&ST_RDONLY));
+    check(client_equal("/data/quasar/account_storage.dat","synthetic-identity\n")&&client_equal("/data/quasar/gsdkTokens.json","{}\n"));
+    if(failures)return 9;
+    int fd=socket(AF_UNIX,SOCK_STREAM|SOCK_CLOEXEC,0);check(fd>=3);if(fd<3)return 9;
+    errno=0;check(fcntl(source,F_GETFD)<0&&errno==EBADF);
+    check(unix_byte_channel_valid(fd,parent));
+    check(!connect(fd,(struct sockaddr *)&address,sizeof(address)));
+    strcpy(address.sun_path,"/unreviewed/private/client");errno=0;check(connect(fd,(struct sockaddr *)&address,sizeof(address))<0&&errno==EPERM);
+    if(failures){close(fd);return 9;}
+    struct client_ready ready={0x4c435931u,fd};if(write(output,&ready,sizeof(ready))!=(ssize_t)sizeof(ready))return 9;
+    char command=0;check(!full(control,&command,1)&&command=='G');
+    char guid[33]={0},body[128]={0};check(!relay_auth(fd,guid));
+    check(!method(fd,"Hello",1,0,body,sizeof(body))&&!strncmp(body,":1.",3));
+    check(!method(fd,"GetId",2,0,body,sizeof(body))&&strlen(body)==32);
+    check(!method(fd,"ListNames",3,1,body,sizeof(body)));
+    check(!method(fd,"ReloadConfig",4,1,body,sizeof(body)));
+    struct client_report report={.phase=1,.checks=checks,.failures=failures};memcpy(report.guid,guid,sizeof(guid));
+    if(write(output,&report,sizeof(report))!=(ssize_t)sizeof(report))return 9;
+    check(!full(control,&command,1)&&command==(epoch==1?'E':'C'));
+    int closed=0;if(epoch==1){closed=client_eof(fd);if(close(fd))closed=0;}else closed=!close(fd);
+    check(closed);errno=0;check(fcntl(fd,F_GETFD)<0&&errno==EBADF);
+    report.phase=2;report.checks=checks;report.failures=failures;
+    return write(output,&report,sizeof(report))==(ssize_t)sizeof(report)&&!failures?0:9;
+}
+static int client_view(pid_t pid,const char *binding,const char *image,const int child_fds[3],const int parent_fds[3],int executed){
+    char path[PATH_MAX];struct stat actual,expected;struct statvfs fs;
+    snprintf(path,sizeof(path),"/proc/%ld/ns/mnt",(long)pid);
+    if(stat(path,&actual)||stat("/proc/self/ns/mnt",&expected)||actual.st_ino==expected.st_ino)return 0;
+    snprintf(path,sizeof(path),"/proc/%ld/root",(long)pid);if(statvfs(path,&fs)||!(fs.f_flag&ST_RDONLY))return 0;
+    snprintf(path,sizeof(path),"/proc/%ld/root/opt/lisa/client.so",(long)pid);
+    if(stat(path,&actual)||stat(binding,&expected)||actual.st_dev!=expected.st_dev||actual.st_ino!=expected.st_ino||
+        statvfs(path,&fs)||!(fs.f_flag&ST_RDONLY)||!(fs.f_flag&ST_NOSUID)||!(fs.f_flag&ST_NODEV))return 0;
+    if(executed){snprintf(path,sizeof(path),"/proc/%ld/exe",(long)pid);
+        if(stat(path,&actual)||stat(image,&expected)||actual.st_dev!=expected.st_dev||actual.st_ino!=expected.st_ino)return 0;}
+    const char *writable[]={"/data/quasar","/tmp","/dev/shm"};dev_t devices[3];
+    for(unsigned i=0;i<3;++i){snprintf(path,sizeof(path),"/proc/%ld/root%s",(long)pid,writable[i]);
+        if(stat(path,&actual)||stat(writable[i],&expected)||actual.st_dev==expected.st_dev||statvfs(path,&fs)||
+            (fs.f_flag&ST_RDONLY)||!(fs.f_flag&ST_NOEXEC)||!(fs.f_flag&ST_NOSUID)||!(fs.f_flag&ST_NODEV)||
+            (uint64_t)fs.f_blocks*fs.f_frsize>(i==0?32u:i==1?16u:4u)*1024*1024)return 0;
+        devices[i]=actual.st_dev;}
+    if(devices[0]==devices[1]||devices[0]==devices[2]||devices[1]==devices[2])return 0;
+    const char *hidden[]={"/proc/self","/proc/1","/proc/cmdline","/sys","/bkupgrade","/dev/snd","/dev/log","/dev/keymaster_svc","/var/run/dbus/system_bus_socket","/etc/shadow"};
+    for(unsigned i=0;i<sizeof(hidden)/sizeof(hidden[0]);++i){snprintf(path,sizeof(path),"/proc/%ld/root%s",(long)pid,hidden[i]);if(!lstat(path,&actual)||errno!=ENOENT)return 0;}
+    struct stat null;if(stat("/dev/null",&null))return 0;
+    snprintf(path,sizeof(path),"/proc/%ld/fd",(long)pid);DIR *fds=opendir(path);if(!fds)return 0;
+    int valid=1;unsigned seen=0;struct dirent *entry;
+    while((entry=readdir(fds))){char *end;long fd=strtol(entry->d_name,&end,10);if(*end||fd<0)continue;
+        snprintf(path,sizeof(path),"/proc/%ld/fd/%ld",(long)pid,fd);if(stat(path,&actual)){valid=0;break;}
+        if(fd<3){if(!S_ISCHR(actual.st_mode)||actual.st_rdev!=null.st_rdev){valid=0;break;}}
+        else{unsigned i=0;for(;i<3&&fd!=child_fds[i];++i){}
+            if(i==3||fstat(parent_fds[i],&expected)||actual.st_dev!=expected.st_dev||actual.st_ino!=expected.st_ino||
+                (i==0?!S_ISSOCK(actual.st_mode):!S_ISFIFO(actual.st_mode))){valid=0;break;}}
+        ++seen;
+    }closedir(fds);if(!valid||seen!=6)return 0;
+    snprintf(path,sizeof(path),"/proc/%ld/status",(long)pid);FILE *status=fopen(path,"r");if(!status)return 0;
+    char line[256];unsigned caps=0;int group=0,uid=0,filter=0;
+    while(fgets(line,sizeof(line),status)){unsigned long long value;unsigned a,b,c,d;
+        if(sscanf(line,"CapInh: %llx",&value)==1||sscanf(line,"CapPrm: %llx",&value)==1||sscanf(line,"CapEff: %llx",&value)==1||
+            sscanf(line,"CapBnd: %llx",&value)==1||sscanf(line,"CapAmb: %llx",&value)==1){++caps;if(value)valid=0;}
+        if(sscanf(line,"Gid: %u %u %u %u",&a,&b,&c,&d)==4)group=a==57342&&b==a&&c==a&&d==a;
+        if(sscanf(line,"Uid: %u %u %u %u",&a,&b,&c,&d)==4)uid=!(a|b|c|d);
+        if(sscanf(line,"Seccomp: %u",&a)==1)filter=a==2;
+    }if(ferror(status))valid=0;fclose(status);return valid&&caps==5&&group&&uid&&filter;
+}
+/* Stage files exist only on a disposable private tmpfs, never the host DATA. */
+static int client_stage(const char *stage,char seeds[PATH_MAX],char profile[PATH_MAX]){
+    if(unshare(CLONE_NEWNS)||mount(NULL,"/",NULL,MS_REC|MS_PRIVATE,NULL)||
+        mount("tmpfs",stage,"tmpfs",MS_NOSUID|MS_NODEV|MS_NOEXEC,"size=1m,mode=700")||
+        snprintf(seeds,PATH_MAX,"%s/seeds",stage)>=PATH_MAX||mkdir(seeds,0700)||
+        snprintf(profile,PATH_MAX,"%s/profile.json",stage)>=PATH_MAX||diagnostics_text(stage,"/profile.json","{}\n"))return -1;
+    int root=open(seeds,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);if(root<0)return -1;int failed=0;
+    for(unsigned i=0;i<PLATFORM_SEED_COUNT;++i){int fd=openat(root,platform_seed_name(i),O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);
+        const char *text=i==0?"synthetic-identity\n":i==1?"{}\n":"";
+        if(fd<0){failed=1;break;}
+        int written=store_write_all(fd,text,strlen(text));if(close(fd))written=-1;if(written){failed=1;break;}}
+    if(close(root))failed=1;return failed?-1:0;
+}
+/* Consumes the coordinator's sole client capability on success and failure. */
+static int start_client(const char *root,const char *image,const char *binding,int channel,unsigned epoch,struct client_handle *handle,char guid[33]){
+    handle->pid=-1;handle->report=handle->control=-1;int reports[2]={-1,-1},commands[2]={-1,-1},live=0;pid_t child=-1;
+    if(snprintf(handle->root,sizeof(handle->root),"%s-client",root)>=(int)sizeof(handle->root)||mkdir(handle->root,0700)||
+        snprintf(handle->stage,sizeof(handle->stage),"%s-client-stage",root)>=(int)sizeof(handle->stage)||mkdir(handle->stage,0700)||
+        pipe2(reports,O_CLOEXEC)||pipe2(commands,O_CLOEXEC))goto failed;
+    pid_t parent=getpid();child=fork();if(child<0)goto failed;
+    if(!child){
+        if(prctl(PR_SET_PDEATHSIG,SIGKILL)||getppid()!=parent)_exit(80);
+        char path[PATH_MAX],text[96];struct process_stamp stamp;
+        if(process_stamp(getpid(),&stamp)||snprintf(path,sizeof(path),"%s.child",handle->root)>=(int)sizeof(path))_exit(80);
+        int file=open(path,O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);int size=snprintf(text,sizeof(text),"%ld %" PRIu64 "\n",(long)getpid(),stamp.ticks);
+        if(file<0||store_write_all(file,text,(size_t)size)||fsync(file)||close(file))_exit(80);
+        int zero=open("/dev/null",O_RDWR|O_CLOEXEC);if(zero<0)_exit(81);
+        for(int i=0;i<3;++i)if(dup2(zero,i)<0||fcntl(i,F_SETFD,0))_exit(81);
+        int keep[]={0,1,2,channel,reports[1],commands[0]};char seeds[PATH_MAX],profile[PATH_MAX];
+        if(close_except(keep,6)||clearenv()||client_stage(handle->stage,seeds,profile)||
+            platform_storage_enter_with_binding(handle->root,seeds,profile,image,0,binding))_exit(82);
+        struct rlimit cpu={3,4},data={32u*1024*1024,32u*1024*1024},core={0,0};
+        if(setrlimit(RLIMIT_CPU,&cpu)||setrlimit(RLIMIT_DATA,&data)||setrlimit(RLIMIT_CORE,&core)||
+            vendor_identity_prepare(57342)||platform_sdk_guard(parent)||unix_byte_channel_guard(channel,parent))_exit(83);
+        for(unsigned i=3;i<6;++i)if(fcntl(keep[i],F_SETFD,0))_exit(84);
+        char a[24],b[24],c[24],d[24],e[8];snprintf(a,sizeof(a),"%d",channel);snprintf(b,sizeof(b),"%d",reports[1]);
+        snprintf(c,sizeof(c),"%d",commands[0]);snprintf(d,sizeof(d),"%ld",(long)parent);snprintf(e,sizeof(e),"%u",epoch);
+        if(setenv("LISA_BYTE_FDS",a,1)||setenv("LD_PRELOAD","/opt/lisa/client.so",1)||setenv("LD_BIND_NOW","1",1))_exit(84);
+        alarm(12);if(raise(SIGSTOP))_exit(84);
+        execl("/system/vendor/quasar/maind","private-bus-client","--client-actor",a,b,c,d,e,(char *)NULL);_exit(85);
+    }
+    live=1;int status=0;pid_t waited;do{waited=waitpid(child,&status,WUNTRACED);}while(waited<0&&errno==EINTR);
+    int stopped=waited==child&&WIFSTOPPED(status)&&WSTOPSIG(status)==SIGSTOP;
+    if(!stopped){if((waited==child&&(WIFEXITED(status)||WIFSIGNALED(status)))||(waited<0&&errno==ECHILD))live=0;goto failed;}
+    int expected[]={channel,reports[1],commands[0]};
+    if(!client_view(child,binding,image,expected,expected,0)||kill(child,SIGCONT))goto failed;
+    struct client_ready ready={0};if(full(reports[0],&ready,sizeof(ready))||ready.magic!=0x4c435931u||ready.channel<3||ready.channel>1023)goto failed;
+    int actual[]={ready.channel,reports[1],commands[0]};if(!client_view(child,binding,image,actual,expected,1))goto failed;
+    close(channel);channel=-1;close(reports[1]);reports[1]=-1;close(commands[0]);commands[0]=-1;
+    if(write(commands[1],"G",1)!=1)goto failed;
+    struct client_report report={0};
+    if(full(reports[0],&report,sizeof(report))||report.phase!=1||report.checks!=23||report.failures||strnlen(report.guid,sizeof(report.guid))!=32)goto failed;
+    memcpy(guid,report.guid,33);handle->pid=child;handle->report=reports[0];handle->control=commands[1];return 0;
+failed:
+    if(live){int status;kill(child,SIGKILL);while(waitpid(child,&status,0)<0&&errno==EINTR){}}
+    if(channel>=0)close(channel);
+    for(unsigned i=0;i<2;++i){if(reports[i]>=0)close(reports[i]);if(commands[i]>=0)close(commands[i]);}return -1;
+}
+static void finish_client(struct client_handle *handle,unsigned epoch){
+    if(handle->pid<2)return;
+    check(write(handle->control,epoch==1?"E":"C",1)==1);close(handle->control);handle->control=-1;
+    struct client_report report={0};int received=!full(handle->report,&report,sizeof(report));close(handle->report);handle->report=-1;
+    int status=0;pid_t done;do{done=waitpid(handle->pid,&status,0);}while(done<0&&errno==EINTR);
+    check(received&&report.phase==2&&report.checks==26&&!report.failures);
+    check(done==handle->pid&&WIFEXITED(status)&&!WEXITSTATUS(status));
+    check(!rmdir(handle->root)&&!rmdir(handle->stage));handle->pid=-1;
+    printf("{\"event\":\"private-bus-client\",\"epoch\":%u,\"actor_checks\":%u,\"failures\":%u,\"client_binding\":true}\n",epoch,report.checks,report.failures);
+}
 static int relay_actor(int client,int backend,int output,pid_t parent){
     struct stat info;struct statvfs fs;char marker[32]={0};int fd=open("/etc/lisa-private-bus",O_RDONLY|O_CLOEXEC);
     if(fd<0)return 9;ssize_t size=read(fd,marker,sizeof(marker));close(fd);int death=0;
@@ -302,7 +464,7 @@ static void finish_relay(struct relay_handle *handle,unsigned epoch,int origin){
     printf("{\"event\":\"private-bus-relay\",\"epoch\":%u,\"actor_checks\":%u,\"failures\":%u,\"result\":%d,\"origin\":%d,\"bounded\":%s}\n",
         epoch,report.checks,report.failures,report.stats.result,report.stats.origin,received&&report.stats.maximum_output<=2*BUS_AUTH_OUTPUT&&report.stats.maximum_pending<=1024?"true":"false");
 }
-static int run_epoch(const char *root,const char *executable,const char *binding,int listener_fd,const int reload[2],const char *endpoint,unsigned epoch,char guid[33]){
+static int run_epoch(const char *root,const char *executable,const char *binding,const char *client_binding,int listener_fd,const int reload[2],const char *endpoint,unsigned epoch,char guid[33]){
     int logs[2];check(!pipe2(logs,O_CLOEXEC));if(failures)return -1;
     pid_t parent=getpid(),child=fork();check(child>=0);if(child<0)return -1;
     if(!child){
@@ -330,7 +492,7 @@ static int run_epoch(const char *root,const char *executable,const char *binding
     if(waited!=child||!WIFSTOPPED(status)){close(logs[0]);return -1;}
     int admitted=WIFSTOPPED(status)&&private_view(child,listener_fd,reload,1,0);check(admitted);
     if(admitted)check(!kill(child,SIGCONT));else kill(child,SIGKILL);
-    int held=-1,client=-1;struct relay_handle relay={.pid=-1,.report=-1};
+    int client=-1;struct relay_handle relay={.pid=-1,.report=-1};struct client_handle own_client={.pid=-1,.report=-1,.control=-1};
     if(admitted&&epoch){
         char image[80];struct stat actual,expected;snprintf(image,sizeof(image),"/proc/%ld/exe",(long)child);int ready=0;
         if(!stat("/usr/bin/dbus-daemon",&expected))for(unsigned i=0;i<300;++i){
@@ -339,13 +501,8 @@ static int run_epoch(const char *root,const char *executable,const char *binding
         check(ready);check(ready&&private_view(child,listener_fd,reload,0,0));
         if(ready){int backend=connect_bus(endpoint);if(backend>=0)client=start_relay(root,executable,backend,&relay);}check(client>=0);
         if(client>=0){
-            char body[128]={0};check(!relay_auth(client,guid));check(strlen(guid)==32);
-            check(!method(client,"Hello",1,0,body,sizeof(body))&&!strncmp(body,":1.",3));
-            check(!method(client,"GetId",2,0,body,sizeof(body))&&strlen(body)==32);
-            check(!method(client,"ListNames",3,1,body,sizeof(body)));
-            check(!method(client,"ReloadConfig",4,1,body,sizeof(body)));
-            held=dup(client);check(held>=0);close(client);client=-1;
-            if(epoch==2&&held>=0){close(held);held=-1;finish_relay(&relay,epoch,BUS_CLIENT);}
+            check(!start_client(root,executable,client_binding,client,epoch,&own_client,guid));client=-1;
+            if(epoch==2&&own_client.pid>=2){finish_client(&own_client,epoch);finish_relay(&relay,epoch,BUS_CLIENT);}
         }
         /* Observe transport negotiation separately from small FD-count limits.
          * The byte adapter does not implement negotiated descriptor passing. */
@@ -357,6 +514,7 @@ static int run_epoch(const char *root,const char *executable,const char *binding
     do{waited=waitpid(child,&status,0);}while(waited<0&&errno==EINTR);
     check(waited==child&&WIFEXITED(status)&&WEXITSTATUS(status)==0);
     if(relay.pid>=2)finish_relay(&relay,epoch,BUS_BACKEND);
+    if(own_client.pid>=2)finish_client(&own_client,epoch);
     /* Bounded private stderr only; never a shared system log. */
     char log[8192];size_t bytes=0;ssize_t got;
     while(bytes<sizeof(log)&&(got=read(logs[0],log+bytes,sizeof(log)-bytes))>0)bytes+=(size_t)got;
@@ -366,16 +524,10 @@ static int run_epoch(const char *root,const char *executable,const char *binding
         check(bytes==sizeof(expected)-1&&!memcmp(log,expected,bytes));
         if(bytes==sizeof(expected)-1&&!memcmp(log,expected,bytes))fputs(expected,stdout);
     }else if(bytes)fprintf(stderr,"epoch %u own private log: %.*s\n",epoch,(int)bytes,log);
-    if(held>=0){
-        unsigned drained=0;int eof=0;
-        while(drained<8192){struct pollfd pending={held,POLLIN,0};char bytes[256];if(poll(&pending,1,1000)!=1)break;
-            ssize_t count=read(held,bytes,sizeof(bytes));if(!count){eof=1;break;}if(count<0)break;drained+=(unsigned)count;}
-        check(eof);close(held);
-    }
     printf("{\"event\":\"private-bus-epoch\",\"epoch\":%u,\"checks\":%u,\"failures\":%u,\"actual_daemon\":%s,\"fd_negotiation_disabled\":false,\"auth_gate_verified\":%s}\n",epoch,checks,failures,epoch?"true":"false",epoch?"true":"false");fflush(stdout);
     return failures?-1:0;
 }
-static int coordinator(const char *base,const char *executable,const char *binding){
+static int coordinator(const char *base,const char *executable,const char *binding,const char *client_binding){
     pid_t parent=getppid();if(parent<=1||prctl(PR_SET_PDEATHSIG,SIGKILL)||getppid()!=parent)return 2;alarm(40);
     char root[PATH_MAX],previous[33]={0};
     for(unsigned epoch=0;epoch<3;++epoch){
@@ -386,7 +538,7 @@ static int coordinator(const char *base,const char *executable,const char *bindi
             listener_fd=socket(AF_UNIX,SOCK_STREAM|SOCK_CLOEXEC|SOCK_NONBLOCK,0);
             if(listener_fd<0||bind(listener_fd,(struct sockaddr *)&endpoint,sizeof(endpoint))||listen(listener_fd,4)||socketpair(AF_UNIX,SOCK_STREAM|SOCK_CLOEXEC,0,reload))return 2;
         }
-        char guid[33]={0};int result=run_epoch(root,executable,binding,listener_fd,reload,epoch?endpoint.sun_path:NULL,epoch,guid);
+        char guid[33]={0};int result=run_epoch(root,executable,binding,client_binding,listener_fd,reload,epoch?endpoint.sun_path:NULL,epoch,guid);
         if(listener_fd>=0){close(listener_fd);close(reload[0]);close(reload[1]);if(unlink(endpoint.sun_path))return 2;}
         if(result)return 2;
         if(epoch==2)check(strcmp(previous,guid)!=0);memcpy(previous,guid,sizeof(previous));
@@ -396,12 +548,17 @@ static int coordinator(const char *base,const char *executable,const char *bindi
 }
 int main(int argc,char **argv){
     if(argc==2&&!strcmp(argv[1],"--actor"))return own_actor();
+    if(argc==7&&!strcmp(argv[1],"--client-actor")){
+        long values[5];for(unsigned i=0;i<5;++i){char *end;values[i]=strtol(argv[i+2],&end,10);if(*end||values[i]<(i==4?1:3)||values[i]>INT_MAX)return 2;}
+        if(values[0]==values[1]||values[0]==values[2]||values[1]==values[2]||getppid()!=values[3]||values[4]>2)return 2;
+        return client_actor((int)values[0],(int)values[1],(int)values[2],(pid_t)values[3],(unsigned)values[4]);
+    }
     if(argc==6&&!strcmp(argv[1],"--relay-actor")){
         long values[4];for(unsigned i=0;i<4;++i){char *end;values[i]=strtol(argv[i+2],&end,10);if(*end||values[i]<3||values[i]>INT_MAX)return 2;}
         if(values[0]==values[1]||values[0]==values[2]||values[1]==values[2]||getppid()!=values[3])return 2;
         return relay_actor((int)values[0],(int)values[1],(int)values[2],(pid_t)values[3]);
     }
-    if(argc!=4||strcmp(argv[1],"--run")||getuid()||geteuid()||getgid()||getegid())return 2;
+    if(argc!=5||strcmp(argv[1],"--run")||getuid()||geteuid()||getgid()||getegid())return 2;
     const char prefix[]="/bkupgrade/data/opt/lisa-controller-lab/private-bus.";const char *base=argv[2];
     if(strncmp(base,prefix,sizeof(prefix)-1))return 2;size_t suffix=strlen(base+sizeof(prefix)-1);if(suffix<6||suffix>16)return 2;
     for(size_t i=sizeof(prefix)-1;base[i];++i)if(!((base[i]>='a'&&base[i]<='z')||(base[i]>='A'&&base[i]<='Z')||(base[i]>='0'&&base[i]<='9')))return 2;
@@ -415,7 +572,7 @@ int main(int argc,char **argv){
     socklen_t length=(socklen_t)(offsetof(struct sockaddr_un,sun_path)+1+strlen(address.sun_path+1));
     if(bind(canary,(struct sockaddr *)&address,length)||listen(canary,1))return 2;
     pid_t child=fork();if(child<0)return 2;
-    if(!child){close(canary);int keep[]={0,1,2};if(close_except(keep,3))_exit(2);_exit(coordinator(base,executable,argv[3]));}
+    if(!child){close(canary);int keep[]={0,1,2};if(close_except(keep,3))_exit(2);_exit(coordinator(base,executable,argv[3],argv[4]));}
     int status=0;pid_t done;do{done=waitpid(child,&status,0);}while(done<0&&errno==EINTR);
     check(done==child&&WIFEXITED(status)&&WEXITSTATUS(status)==0);
     int control=socket(AF_UNIX,SOCK_STREAM|SOCK_CLOEXEC,0);check(control>=0&&!connect(control,(struct sockaddr *)&address,length));if(control>=0)close(control);close(canary);
