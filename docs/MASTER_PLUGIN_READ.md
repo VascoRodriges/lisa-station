@@ -21,8 +21,14 @@ epochs. These are admission-verifier tests; they do not inject another module
 into the actor or authorize a replacement.
 
 The client loads its firmware `libasound.so.2`, verifies the expected 1.2.1.2
-version, resolves the reviewed public API and the plugin's versioned external
-entry, then creates the logical control. Real ALSA metadata calls must show one
+version and resolves the reviewed public API and plugin symbol marker. It builds
+a private typed configuration tree: `ctl_type.lisa_master.lib` identifies the
+absolute pinned module and `ctl.default.type` selects it. A real
+`snd_ctl_open_lconf(..., "default", ...)` call searches the definition and loads
+the plugin through ALSA. The client does not call the plugin entry directly.
+Configuration nodes are constructed through ALSA's API, with no interpolation
+of file paths into configuration syntax; the root owns and frees its children.
+Real ALSA metadata calls must show one
 readable, volatile integer Master with the agreed range and no write access.
 Every real read then passes through `snd_ctl_elem_read` and the plugin callback
 to the backend. Public libasound declarations and kernel ioctl declarations
@@ -39,8 +45,10 @@ must return EPIPE with zero output; it cannot return the earlier value. Plugin
 close retires its owned FD, and both views must be released.
 
 The **12-event** typed proof requires the distinct plugin-composition record,
+including `configuration_loader: true`,
 all eight broker epochs, 28 native source-inspection controls, successful exit
-and cleanup. The older direct-byte-client report cannot qualify this mode.
+and cleanup. Neither the older direct-byte-client report nor the initial
+direct-entry plugin report can qualify this configuration-loader mode.
 Stock process/configuration/boot and firewall snapshots remain unchanged.
 The ARM module qualified here is the same artifact used by the preceding
 plugin build; the native composition is a separate 50th build target.
@@ -57,9 +65,15 @@ python -m controller.qualify_master_plugin_read SPEAKER_SSH_ALIAS \
   --ssh-config PRIVATE_SSH_CONFIG --run-read-only-plugin-lab
 ```
 
-The device composition calls the external plugin entry directly with an own
-configuration object. The normal `ctl.default` configuration loader is a
-separate next check, followed by exact admission of a third SDK capability.
+The initial device composition used a direct external-entry call. The current
+composition additionally verifies ALSA's normal definition/plugin loader with
+a private configuration root. It does not call the global configuration updater
+or change a firmware configuration file. A private `ALSA_CONFIG_PATH` file and
+the SDK's actual `snd_mixer_attach("default")` path remain next, alongside exact
+admission of a third SDK capability.
 SDK source/descriptor budgets and bus profiles remain unchanged. This lab is
 not a complete isolated Alice, permanent hardware service, production mode
 controller or finished voice/HA integration.
+
+The distinction between local-root loading and global configuration update
+follows the [official ALSA control implementation](https://github.com/alsa-project/alsa-lib/blob/v1.2.1.2/src/control/control.c).

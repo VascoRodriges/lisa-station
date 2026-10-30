@@ -287,7 +287,7 @@ static int run(const char *base,const char *image){
 #undef INSPECT
     int network=socket(AF_INET,SOCK_STREAM|SOCK_CLOEXEC,0);check(network>=0);if(network>=0)close(network);
 #ifdef MASTER_PLUGIN_LAB
-    printf("{\"event\":\"master-plugin-read\",\"clients\":8,\"plugin_admission_controls\":%u,\"library_version\":\"1.2.1.2\",\"metadata_checked\":true,\"backend_death_error\":true,\"sdk_executed\":false,\"audio_opened\":false,\"ok\":%s}\n",plugin_admission_controls,total_good&&!failures?"true":"false");fflush(stdout);
+    printf("{\"event\":\"master-plugin-read\",\"clients\":8,\"plugin_admission_controls\":%u,\"library_version\":\"1.2.1.2\",\"configuration_loader\":true,\"metadata_checked\":true,\"backend_death_error\":true,\"sdk_executed\":false,\"audio_opened\":false,\"ok\":%s}\n",plugin_admission_controls,total_good&&!failures?"true":"false");fflush(stdout);
 #endif
     printf("{\"selftest\":\"master-read-broker\",\"checks\":%u,\"inspection_checks\":%u,\"failures\":%u,\"ok\":%s,\"own_client_only\":true,\"unrelated_socket_creation\":%s,\"audio_opened\":false,\"production_changed\":false}\n",checks-before_checks,inspection_checks,failures,total_good&&!failures?"true":"false",network>=0?"true":"false");fflush(stdout);
     return total_good&&!failures?0:-1;

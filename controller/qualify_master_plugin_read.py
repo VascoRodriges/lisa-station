@@ -19,7 +19,7 @@ def evaluate_events(events):
     if type(events) is not list or len(events) != 12 or type(events[8]) is not dict:
         return False
     expected = dict(event="master-plugin-read", clients=8, plugin_admission_controls=16, library_version="1.2.1.2",
-                    metadata_checked=True, backend_death_error=True, sdk_executed=False, audio_opened=False, ok=True)
+                    configuration_loader=True, metadata_checked=True, backend_death_error=True, sdk_executed=False, audio_opened=False, ok=True)
     row = events[8]
     return (set(row) == set(expected) and all(type(row[k]) is type(v) and row[k] == v for k, v in expected.items())
             and evaluate_base(events[:8] + events[9:]))

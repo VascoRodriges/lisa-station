@@ -338,3 +338,9 @@ qualifies eight actual Master-read epochs through own clients, including
 module-inode admission controls and a truthful ALSA error after backend death.
 The normal ALSA configuration loader, third SDK capability, permanent service
 and full production/voice integration remain pending.
+
+The same own-client lab now uses ALSA's `ctl.default` definition/plugin loader
+with a private typed configuration root. Its strict report requires this loader
+proof separately from the earlier direct-entry result. Global configuration-file
+loading, the SDK's actual mixer API and third-capability admission remain next;
+no firmware configuration or existing SDK permission is changed.

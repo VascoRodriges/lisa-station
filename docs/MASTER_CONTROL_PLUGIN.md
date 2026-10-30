@@ -64,8 +64,9 @@ python -m controller.qualify_master_plugin --sanitize
 
 The subsequent [real speaker composition](MASTER_PLUGIN_READ.md) now loads the
 ARM module with the firmware ALSA library and verifies actual Master values
-using own clients. The normal ALSA configuration loader, SDK-only configuration
-and separately qualified third-capability admission remain next. Existing SDK
+using own clients, now through ALSA's definition/plugin loader and a private
+configuration root. SDK-specific configuration-file/mixer loading and separately
+qualified third-capability admission remain next. Existing SDK
 descriptors, bus source budgets, production modes, microphone and second
 station are unchanged.
 
