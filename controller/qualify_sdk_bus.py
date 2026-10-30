@@ -15,8 +15,10 @@ from controller.qualify_private_bus import SCRIPT as BUS_SCRIPT
 from controller.qualify_socket_close import rules_only
 
 
-def diagnostic_script(*, empty_bluez=False):
-    mode = "--run-sdk-bluez" if empty_bluez else "--run-sdk"
+def diagnostic_script(*, empty_bluez=False, synthetic_adapter=False):
+    if empty_bluez and synthetic_adapter:
+        raise ValueError("choose one explicit service fixture")
+    mode = "--run-sdk-adapter" if synthetic_adapter else "--run-sdk-bluez" if empty_bluez else "--run-sdk"
     script = BUS_SCRIPT.replace("PROBE --run ", f"PROBE {mode} ")
     # The same owned-PID watchdog also watches the SDK family leader. Its
     # descendants inherit PDEATH/ptrace EXITKILL; no stock process is targeted.
@@ -43,15 +45,18 @@ def diagnostic_script(*, empty_bluez=False):
     )
 
 
-def evaluate_events(events, *, empty_bluez=False):
+def evaluate_events(events, *, empty_bluez=False, synthetic_adapter=False):
     """Require SDK boundary, real EXTERNAL authentication and complete teardown."""
-    if empty_bluez:
+    if empty_bluez and synthetic_adapter:
+        return False
+    if empty_bluez or synthetic_adapter:
         if type(events) is not list or len(events) != 13 or any(type(e) is not dict for e in events):
             return False
         for index, role in [(2, "own-elf"), (6, "platform")]:
             event = events[index]
-            required = dict(event="sdk-empty-provider", role=role, primary_owner=True,
-                            closed=True, empty_tree_only=True, hardware_opened=False)
+            required = dict(event="sdk-adapter-provider" if synthetic_adapter else "sdk-empty-provider",
+                            role=role, primary_owner=True, closed=True, hardware_opened=False)
+            required["synthetic_adapter" if synthetic_adapter else "empty_tree_only"] = True
             if (set(event) != set(required) | {"calls"}
                 or any(type(event.get(k)) is not type(v) or event[k] != v for k, v in required.items())
                 or type(event.get("calls")) is not int or not 1 <= event["calls"] <= 4
@@ -135,7 +140,9 @@ def main():
     parser.add_argument("host")
     parser.add_argument("--ssh-config", type=Path)
     parser.add_argument("--run-sdk-bus-diagnostic", action="store_true", required=True)
-    parser.add_argument("--empty-bluez", action="store_true", help="Explicit empty ObjectManager lab; no Bluetooth hardware")
+    service = parser.add_mutually_exclusive_group()
+    service.add_argument("--empty-bluez", action="store_true", help="Explicit empty ObjectManager lab; no Bluetooth hardware")
+    service.add_argument("--synthetic-adapter", action="store_true", help="One synthetic offline Adapter1; no real Bluetooth hardware")
     args = parser.parse_args()
     if args.host.startswith("-"):
         parser.error("SSH alias required")
@@ -167,11 +174,11 @@ def main():
     identity = "pidof dbus-daemon quasar_launcher2 maind alsa-audio-monitord hardvold chronyd unbound; cat /proc/sys/kernel/random/boot_id; sha256sum /etc/init.d/rcS /etc/init.d/S99zdropbear /etc/chrony.conf /etc/unbound/unbound.conf /etc/resolv.conf"
     before = remote(identity, check=True).stdout
     firewall = remote("iptables-save; ip6tables-save", check=True).stdout
-    script = diagnostic_script(empty_bluez=args.empty_bluez).replace("PROBE", resolved[0]).replace("FACTORY", resolved[1]).replace("CLIENT_LIBRARY", resolved[2])
+    script = diagnostic_script(empty_bluez=args.empty_bluez, synthetic_adapter=args.synthetic_adapter).replace("PROBE", resolved[0]).replace("FACTORY", resolved[1]).replace("CLIENT_LIBRARY", resolved[2])
     result = remote("sh -s", input=script.encode())
     after = remote(identity, check=True).stdout
     after_firewall = remote("iptables-save; ip6tables-save", check=True).stdout
-    report_name = "sdk-bluez-bus" if args.empty_bluez else "sdk-bus"
+    report_name = "sdk-adapter-bus" if args.synthetic_adapter else "sdk-bluez-bus" if args.empty_bluez else "sdk-bus"
     (root / f"build/{report_name}.stdout.private.txt").write_bytes(result.stdout)
     (root / f"build/{report_name}.stderr.private.txt").write_bytes(result.stderr)
     events = [json.loads(line) for line in result.stdout.decode().splitlines()]
@@ -184,7 +191,7 @@ def main():
         for role in range(2):
             for suffix in ["stderr", "paths", "bus-stderr", "match"]:
                 name = f"sdk{role}-{suffix}.private.txt"
-                local_name = "bluez-" + name if args.empty_bluez else name
+                local_name = "adapter-" + name if args.synthetic_adapter else "bluez-" + name if args.empty_bluez else name
                 saved = remote("test ! -L " + state + "/" + name + " && head -c 65536 " + state + "/" + name)
                 if saved.returncode == 0:
                     (root / "build" / local_name).write_bytes(saved.stdout)
@@ -197,7 +204,7 @@ def main():
     report = dict(
         binary_sha256=digests[0], binding_sha256=digests[1], client_binding_sha256=digests[2],
         returncode=result.returncode, events=events,
-        qualified=result.returncode == 0 and evaluate_events(events, empty_bluez=args.empty_bluez),
+        qualified=result.returncode == 0 and evaluate_events(events, empty_bluez=args.empty_bluez, synthetic_adapter=args.synthetic_adapter),
         stock_identity_and_configs_preserved=before == after,
         firewall_unchanged=rules_only(firewall) == rules_only(after_firewall),
         audio_captured=False, sdk_executed=any(e.get("event") == "sdk-bus-diagnostic" and e.get("role") == "platform" and e.get("exec_verified") is True for e in events),

@@ -139,6 +139,11 @@ actual SDK ObjectManager request, with separate provider/observer ownership and
 verified teardown. The SDK then requires a default Bluetooth adapter object;
 real hardware, permanent mode switching and usable SDK functionality remain pending.
 
+A [synthetic offline adapter audit](docs/SYNTHETIC_ADAPTER.md) now gets past that
+missing-object dependency without exposing hardware. The next observed failure
+concerns opening another bus connection; channel admission/lifecycle review is
+required before expanding the diagnostic.
+
 ## Development
 
 Use Python 3.14 on Linux in an isolated virtual environment:

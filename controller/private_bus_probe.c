@@ -26,6 +26,7 @@
 #include "sdk_metadata_trace.h"
 #include "private_match_snapshot.h"
 #include "private_empty_objects.h"
+#include "private_adapter_objects.h"
 #ifndef __arm__
 #error This namespace diagnostic requires the reviewed ARM device ABI
 #endif
@@ -399,7 +400,8 @@ static int provider_pump(struct sdk_empty_provider *provider,const char *sender)
         unsigned char bytes[EMPTY_OBJECTS_FRAME];struct private_empty_request request;size_t written=0;
         if(!policy_io(provider->fd,bytes,16,0)){size_t fields=u32(bytes+12),length=(16+fields+7)&~(size_t)7;
             if(!u32(bytes+4)&&fields<=4096&&length<=sizeof(bytes)&&!policy_io(provider->fd,bytes+16,length-16,0)&&
-                !private_empty_request_decode(bytes,length,sender,&request)&&!private_empty_reply(&request,++provider->serial,bytes,sizeof(bytes),&written)&&
+                !private_empty_request_decode(bytes,length,sender,&request)&&
+                !(sdk_bluez==2?private_adapter_reply(&request,++provider->serial,bytes,sizeof(bytes),&written):private_empty_reply(&request,++provider->serial,bytes,sizeof(bytes),&written))&&
                 !policy_io(provider->fd,bytes,written,1)){++provider->calls;good=1;}
         }
     }
@@ -646,7 +648,7 @@ static int sdk_binding_mapped(pid_t child,void *opaque){
 static _Atomic int sdk_control_ready;
 static void *sdk_control_thread(void *unused){(void)unused;atomic_fetch_add(&sdk_control_ready,1);
     for(;;){struct timespec pause={0,1000000};nanosleep(&pause,NULL);}return NULL;}
-static int sdk_bus_control(int source,pid_t parent,const char *provider){
+static int sdk_bus_control(int source,pid_t parent,const char *provider,int adapter){
     if(!client_equal("/etc/lisa-platform-storage","LISA_PLATFORM_STORAGE_V1\n")||getppid()!=parent||
         prctl(PR_GET_NO_NEW_PRIVS,0,0,0,0)!=1||!unix_byte_channel_valid(source,parent))return 9;
     errno=0;int missing=open("/lisa-sdk-missing-metadata",O_RDONLY|O_NOFOLLOW|O_CLOEXEC);if(missing>=0||errno!=ENOENT)return 9;
@@ -664,7 +666,10 @@ static int sdk_bus_control(int source,pid_t parent,const char *provider){
     if(provider){
         struct policy_frame response;
         if(empty_call_request(fd,5,"/","org.freedesktop.DBus.ObjectManager","GetManagedObjects")||policy_frame_read(fd,&response)||response.type!=2||response.reply!=5||strcmp(response.sender,provider)||
-            strcmp(response.signature,"a{oa{sa{sv}}}")||response.payload!=8||u32(response.bytes+response.start)||u32(response.bytes+response.start+4))return 9;
+            strcmp(response.signature,"a{oa{sa{sv}}}"))return 9;
+        if(adapter){unsigned char expected[ADAPTER_BODY];size_t count=0;
+            if(private_adapter_body(expected,sizeof(expected),&count)||response.payload!=count||memcmp(response.bytes+response.start,expected,count))return 9;
+        }else if(response.payload!=8||u32(response.bytes+response.start)||u32(response.bytes+response.start+4))return 9;
     }
     if(close(fd))return 9;
     int marker=open("/data/quasar/own-bus-gate-proof",O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);
@@ -979,7 +984,7 @@ static int run_sdk(const char *base,const char *root,const char *own,const char 
         if(ptrace(PTRACE_TRACEME,0,NULL,NULL)||vendor_identity_prepare(57342)||platform_sdk_guard(parent)||unix_byte_channel_guard(channel,parent))_exit(85);
         if(raise(SIGSTOP))_exit(86);
         if(role)execl("/system/vendor/quasar/maind","maind","--platformd",(char *)NULL);
-        else if(provider)execl("/system/vendor/quasar/maind","sdk-bus-control","--sdk-bluez-control",fd_text,parent_text,provider->name,(char *)NULL);
+        else if(provider)execl("/system/vendor/quasar/maind","sdk-bus-control",sdk_bluez==2?"--sdk-adapter-control":"--sdk-bluez-control",fd_text,parent_text,provider->name,(char *)NULL);
         else execl("/system/vendor/quasar/maind","sdk-bus-control","--sdk-control",fd_text,parent_text,(char *)NULL);
         _exit(87);
     }
@@ -1068,8 +1073,8 @@ static int sdk_bus_epoch(const char *base,const char *own,const char *server_bin
         if(sdk_bluez){
             if(provider.fd>=3&&provider_close(&provider))good=0;
             if(!provider.owned||!provider.closed||provider.calls<1||provider.calls>4||(!role&&provider.calls!=1))good=0;
-            printf("{\"event\":\"sdk-empty-provider\",\"role\":\"%s\",\"primary_owner\":%s,\"calls\":%u,\"closed\":%s,\"empty_tree_only\":true,\"hardware_opened\":false}\n",
-                role?"platform":"own-elf",provider.owned?"true":"false",provider.calls,provider.closed?"true":"false");fflush(stdout);
+            printf("{\"event\":\"%s\",\"role\":\"%s\",\"primary_owner\":%s,\"calls\":%u,\"closed\":%s,\"%s\":true,\"hardware_opened\":false}\n",
+                sdk_bluez==2?"sdk-adapter-provider":"sdk-empty-provider",role?"platform":"own-elf",provider.owned?"true":"false",provider.calls,provider.closed?"true":"false",sdk_bluez==2?"synthetic_adapter":"empty_tree_only");fflush(stdout);
         }
         if(observer.fd>=3){
             if(good&&(observer_after_sdk(&observer)||observer_save(base,role,&observer)))good=0;
@@ -1182,11 +1187,11 @@ static int coordinator(const char *base,const char *executable,const char *bindi
 }
 int main(int argc,char **argv){
     if(argc==2&&!strcmp(argv[1],"--actor"))return own_actor();
-    if((argc==4&&!strcmp(argv[1],"--sdk-control"))||(argc==5&&!strcmp(argv[1],"--sdk-bluez-control"))){
+    if((argc==4&&!strcmp(argv[1],"--sdk-control"))||(argc==5&&(!strcmp(argv[1],"--sdk-bluez-control")||!strcmp(argv[1],"--sdk-adapter-control")))){
         long values[2];for(unsigned i=0;i<2;++i){char *end;values[i]=strtol(argv[i+2],&end,10);if(*end||values[i]<3||values[i]>INT_MAX)return 2;}
         if(getppid()!=values[1])return 2;
         if(argc==5&&!empty_objects_name_size(argv[4]))return 2;
-        return sdk_bus_control((int)values[0],(pid_t)values[1],argc==5?argv[4]:NULL);
+        return sdk_bus_control((int)values[0],(pid_t)values[1],argc==5?argv[4]:NULL,!strcmp(argv[1],"--sdk-adapter-control"));
     }
     if(argc==7&&!strcmp(argv[1],"--client-actor")){
         long values[5];for(unsigned i=0;i<5;++i){char *end;values[i]=strtol(argv[i+2],&end,10);if(*end||values[i]<(i==4?1:3)||values[i]>INT_MAX)return 2;}
@@ -1198,8 +1203,8 @@ int main(int argc,char **argv){
         if(values[0]==values[1]||values[0]==values[2]||values[1]==values[2]||getppid()!=values[3])return 2;
         return relay_actor((int)values[0],(int)values[1],(int)values[2],(pid_t)values[3]);
     }
-    if(argc!=5||(strcmp(argv[1],"--run")&&strcmp(argv[1],"--run-sdk")&&strcmp(argv[1],"--run-sdk-bluez"))||getuid()||geteuid()||getgid()||getegid())return 2;
-    sdk_bluez=!strcmp(argv[1],"--run-sdk-bluez");int sdk=sdk_bluez||!strcmp(argv[1],"--run-sdk");
+    if(argc!=5||(strcmp(argv[1],"--run")&&strcmp(argv[1],"--run-sdk")&&strcmp(argv[1],"--run-sdk-bluez")&&strcmp(argv[1],"--run-sdk-adapter"))||getuid()||geteuid()||getgid()||getegid())return 2;
+    sdk_bluez=!strcmp(argv[1],"--run-sdk-adapter")?2:!strcmp(argv[1],"--run-sdk-bluez");int sdk=sdk_bluez||!strcmp(argv[1],"--run-sdk");
     if(sdk){
         char pattern[1024];int fd=open("/proc/sys/kernel/core_pattern",O_RDONLY|O_NOFOLLOW|O_CLOEXEC);if(fd<0)return 2;
         ssize_t count=read(fd,pattern,sizeof(pattern));int closed=close(fd);

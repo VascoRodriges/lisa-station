@@ -121,6 +121,9 @@ jobs:
             cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/empty_objects_probe.c -o build/empty-objects-host
             ./build/empty-objects-host --selftest
             python3 -m controller.qualify_empty_objects_wire ./build/empty-objects-host
+            cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/adapter_objects_probe.c -o build/adapter-objects-host
+            ./build/adapter-objects-host --selftest
+            python3 -m controller.qualify_adapter_objects_wire ./build/adapter-objects-host
           cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/bus_relay_probe.c -o build/bus-relay-host
           ./build/bus-relay-host --selftest
           cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror -shared -fPIC controller/private_bus_factory.c -o build/private-bus-factory-host.so

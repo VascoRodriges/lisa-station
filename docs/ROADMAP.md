@@ -271,3 +271,9 @@ complete the exact zero-argument request; provider/SDK state is absent after
 teardown. The actual SDK next requires a default Adapter1 object. This exposes
 no Bluetooth hardware and does not complete service compatibility, permanent
 switching or any production phase above.
+
+A [synthetic offline Adapter1 fixture](SYNTHETIC_ADAPTER.md) now lets the SDK pass
+that missing-object check, with no new method permissions or hardware access.
+Its next failure is EMFILE while opening a bus connection. Confirming the source
+and safely composing independent one-shot channels are the next IPC tasks;
+full service compatibility and all permanent production phases remain pending.

@@ -207,3 +207,42 @@ def test_empty_service_requires_additional_schema_denial_controls(count):
     rows = bluez_evidence()
     rows[8]["checks"] = count
     assert not evaluate_events(rows, empty_bluez=True)
+
+
+def adapter_evidence():
+    rows = bluez_evidence()
+    for index in [2, 6]:
+        rows[index]["event"] = "sdk-adapter-provider"
+        del rows[index]["empty_tree_only"]
+        rows[index]["synthetic_adapter"] = True
+    return rows
+
+
+def test_synthetic_adapter_has_a_distinct_opt_in_and_evidence_kind():
+    assert evaluate_events(adapter_evidence(), synthetic_adapter=True)
+    assert not evaluate_events(adapter_evidence(), empty_bluez=True)
+    assert not evaluate_events(bluez_evidence(), synthetic_adapter=True)
+    assert not evaluate_events(adapter_evidence())
+    assert not evaluate_events(adapter_evidence(), empty_bluez=True, synthetic_adapter=True)
+    with pytest.raises(ValueError):
+        diagnostic_script(empty_bluez=True, synthetic_adapter=True)
+    script = diagnostic_script(synthetic_adapter=True)
+    assert "PROBE --run-sdk-adapter " in script and "PROBE --run-sdk-bluez " not in script
+
+
+@pytest.mark.parametrize("index", [2, 6])
+@pytest.mark.parametrize("key,value", [
+    ("synthetic_adapter", False), ("synthetic_adapter", 1), ("hardware_opened", True),
+    ("primary_owner", False), ("closed", False), ("calls", 0), ("calls", 5), ("calls", True),
+])
+def test_synthetic_adapter_still_requires_owned_bounded_hardware_free_teardown(index, key, value):
+    rows = adapter_evidence()
+    rows[index][key] = value
+    assert not evaluate_events(rows, synthetic_adapter=True)
+
+
+@pytest.mark.parametrize("index", range(13))
+def test_synthetic_adapter_requires_all_original_boundary_events(index):
+    rows = adapter_evidence()
+    del rows[index]
+    assert not evaluate_events(rows, synthetic_adapter=True)
