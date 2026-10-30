@@ -38,7 +38,10 @@ Seven own-client cases passed on the speaker and fortified Linux host: **44
 parent checks and 47 actor checks, 91 total**. The normal client makes 37 checks;
 the two-thread client makes ten. Five malformed admission cases exit with the
 expected code 125 before running their client. The threaded client claims two
-different streams, returns each stream's own marker and exhausts the pool.
+different streams, returns each stream's own marker and exhausts the pool. Each
+fixture pthread has an explicit 1 MiB stack. An inherited large stack default
+otherwise exhausted the child's 32 MiB DATA budget in CI; the host regression now
+runs with a 32 MiB default stack limit while keeping that DATA budget unchanged.
 
 The real dynamic loader resolves the child's libc calls through the shared
 library. Checks cover socket flags, logical connect ordering, aliases, duplicate
@@ -51,7 +54,7 @@ and firewall rules are preserved. The read-only root filesystem is unchanged.
 Qualified ARM SHA256 values:
 
 - Binding: `61765af42ad63d79dbaa72f8551a2021fea0e40aae44154c61e2468dfc2e59d6`
-- Probe: `9342f5673255663942f59b416f6823b6758790c69ebc0ce28bc7dc86eb094189`
+- Probe: `48b42ca44726a9ad0a88c128d8513801dd9d907efe05b07a382b8e1ec8ebaf4a`
 
 Ruff and **1346 Python/HA tests** pass. There are 41 native build targets. CI
 builds the binding and repeats the own-client host trial alongside the original

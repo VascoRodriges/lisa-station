@@ -299,7 +299,14 @@ static int factory_concurrent_actor(int output,int control,pid_t parent){
     errno=0;long raw=syscall(SYS_socket,AF_UNIX,SOCK_STREAM|SOCK_CLOEXEC,0);int gated=raw==-1&&errno==EPERM;check(gated);
     if(!gated){if(raw>=0)close((int)raw);return 9;}
     _Atomic int ready=0,start=0;struct concurrent_client clients[2]={{&ready,&start,0,0},{&ready,&start,0,0}};pthread_t threads[2];int created[2];
-    for(unsigned i=0;i<2;++i){created[i]=!pthread_create(&threads[i],NULL,factory_client_thread,&clients[i]);check(created[i]);}
+    /* A runner's inherited stack limit can make glibc reserve tens of MiB
+     * per pthread and exhaust the deliberately small child DATA budget.
+     * Bound our own tiny fixture stacks independently of that default. */
+    pthread_attr_t attributes;
+    if(pthread_attr_init(&attributes))return 9;
+    if(pthread_attr_setstacksize(&attributes,1024u*1024)){pthread_attr_destroy(&attributes);return 9;}
+    for(unsigned i=0;i<2;++i){created[i]=!pthread_create(&threads[i],&attributes,factory_client_thread,&clients[i]);check(created[i]);}
+    if(pthread_attr_destroy(&attributes))return 9;
     for(unsigned i=0;i<2000&&atomic_load(&ready)!=2;++i){struct timespec pause={0,1000000};nanosleep(&pause,NULL);}
     check(atomic_load(&ready)==2);atomic_store(&start,1);
     for(unsigned i=0;i<2;++i){if(created[i])check(!pthread_join(threads[i],NULL)&&clients[i].good);else check(0);}
