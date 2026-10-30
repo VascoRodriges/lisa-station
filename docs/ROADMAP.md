@@ -319,3 +319,10 @@ control attachment and its real negative result. A separate bounded diagnostic
 factory, known real-library own control and private metadata records preserve
 the hardware denial and existing owner/relay checks. A limited connection to
 the independent hardware-volume role remains to be designed and qualified.
+
+The standalone [Master read broker](MASTER_READ_BROKER.md) now qualifies actual
+read-only hardware access behind an epoch-bound GET protocol, separate actor
+admission, read-only ioctl filtering and owned cleanup. Eight real speaker
+epochs cover normal data, malformed/replayed requests and backend death.
+The SDK still receives no raw control FD; ALSA-plugin composition, persistent
+operation and all production switching/voice phases remain pending.

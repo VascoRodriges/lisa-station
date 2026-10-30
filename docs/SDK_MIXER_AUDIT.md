@@ -61,7 +61,9 @@ Ruff and **1778 Python/HA tests** pass. CI adds the diagnostic factory as the
 Read-only inspection found that the firmware's default control configuration
 selects card zero. That card also exposes capture/AGC controls, so giving the
 SDK its raw control descriptor would exceed a Master-volume interface. The next
-step is a reviewed, limited connection to the independent hardware-volume role,
-with truthful metadata and operations; arbitrary ioctl access and a fake mixer
+step is a reviewed, limited connection to the independent hardware-volume role.
+The subsequent standalone [read broker](MASTER_READ_BROKER.md) now verifies the
+real GET path with own actors; SDK/plugin integration remains separate. The
+interface requires truthful metadata and operations; arbitrary ioctl access and a fake mixer
 remain outside this design. No real sound device, recording or playback was
 opened in this stage. Production switching and the remaining roadmap are open.

@@ -62,6 +62,7 @@ jobs:
       - run: python controller/build.py --target unix-bus-factory
       - run: python controller/build.py --target unix-mixer-factory
       - run: python controller/build.py --target private-bus-probe
+      - run: python controller/build.py --target master-read-probe
       - run: python controller/build.py --target bus-auth-probe
       - run: python controller/build.py --target bus-relay-probe
       - run: python controller/build.py --target private-bus-factory
@@ -139,6 +140,10 @@ jobs:
             cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror -shared -fPIC controller/mixer_abi_fixture.c -o build/libmixer-abi-fixture.so
             cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/mixer_hook_probe.c -pthread -ldl -Lbuild -l:libmixer-abi-fixture.so -o build/mixer-hook-host
             LD_LIBRARY_PATH=build ./build/mixer-hook-host --selftest
+            cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/master_protocol_probe.c -o build/master-protocol-host
+            ./build/master-protocol-host --selftest
+            cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/master_guard_probe.c -o build/master-guard-host
+            ./build/master-guard-host --selftest
           cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/bus_relay_probe.c -o build/bus-relay-host
           ./build/bus-relay-host --selftest
           cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror -shared -fPIC controller/private_bus_factory.c -o build/private-bus-factory-host.so
@@ -332,5 +337,6 @@ jobs:
             build/private-bus-factory.so
             build/private-bus-error-factory.so
             build/unix-mixer-factory.so
+            build/master-read-probe.armhf
             build/bus-auth-probe.armhf
             build/bus-relay-probe.armhf
