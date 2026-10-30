@@ -46,6 +46,7 @@ parser.add_argument(
         "bus-auth-probe",
         "bus-relay-probe",
         "private-bus-factory",
+        "private-bus-error-factory",
         "station-init",
         "boot-runner-probe",
         "boot-dispatch-probe",
@@ -97,6 +98,7 @@ sources = {
     "bus-auth-probe": "bus_auth_probe.c",
     "bus-relay-probe": "bus_relay_probe.c",
     "private-bus-factory": "private_bus_factory.c",
+    "private-bus-error-factory": "private_bus_factory.c",
     "station-init": "station_init.c",
     "boot-runner-probe": "boot_runner_probe.c",
     "boot-dispatch-probe": "boot_dispatch_probe.c",
@@ -114,7 +116,7 @@ output = (
         args.target
         + (
             ".so"
-            if args.target in {"time-clock-proof", "unix-bus-factory", "private-bus-factory"}
+            if args.target in {"time-clock-proof", "unix-bus-factory", "private-bus-factory", "private-bus-error-factory"}
             else ".armhf"
         )
     )
@@ -139,10 +141,11 @@ subprocess.run(
             in {"platform-worker-probe", "platform-sdk-probe", "unix-bus-factory", "unix-channel-probe", "private-bus-probe"}
             else []
         ),
-        *(["-ldl"] if args.target in {"diagnostics-guard-probe", "time-clock-proof"} else []),
+        *(["-ldl"] if args.target in {"diagnostics-guard-probe", "time-clock-proof", "private-bus-error-factory"} else []),
+        *(["-DLISA_PRIVATE_ERROR_AUDIT=1"] if args.target == "private-bus-error-factory" else []),
         *(
             ["-shared", "-fPIC"]
-            if args.target in {"time-clock-proof", "unix-bus-factory", "private-bus-factory"}
+            if args.target in {"time-clock-proof", "unix-bus-factory", "private-bus-factory", "private-bus-error-factory"}
             else []
         ),
         "-o",

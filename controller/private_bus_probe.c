@@ -28,12 +28,14 @@
 #include "private_empty_objects.h"
 #include "private_adapter_objects.h"
 #include "sdk_name_ledger.h"
+#include "driver_denial_record.h"
 #ifndef __arm__
 #error This namespace diagnostic requires the reviewed ARM device ABI
 #endif
 static unsigned checks,failures;
 static int sdk_bluez;
 static int sdk_dual;
+static int sdk_errors;
 static void check(int ok){++checks;if(!ok){++failures;fprintf(stderr,"private bus check %u errno %d\n",checks,errno);}}
 static int full(int fd,void *buffer,size_t size){
     uint64_t end=guardian_milliseconds()+3000;size_t used=0;
@@ -685,7 +687,7 @@ static int sdk_binding_mapped(pid_t child,void *opaque){
 static _Atomic int sdk_control_ready;
 static void *sdk_control_thread(void *unused){(void)unused;atomic_fetch_add(&sdk_control_ready,1);
     for(;;){struct timespec pause={0,1000000};nanosleep(&pause,NULL);}return NULL;}
-static int sdk_bus_control(int source,pid_t parent,const char *provider,int adapter,int dual){
+static int sdk_bus_control(int source,pid_t parent,const char *provider,int adapter,int dual,int errors){
     if(!client_equal("/etc/lisa-platform-storage","LISA_PLATFORM_STORAGE_V1\n")||getppid()!=parent||
         prctl(PR_GET_NO_NEW_PRIVS,0,0,0,0)!=1||!unix_byte_channel_valid(source,parent))return 9;
     errno=0;int missing=open("/lisa-sdk-missing-metadata",O_RDONLY|O_NOFOLLOW|O_CLOEXEC);if(missing>=0||errno!=ENOENT)return 9;
@@ -712,7 +714,9 @@ static int sdk_bus_control(int source,pid_t parent,const char *provider,int adap
         int next=socket(AF_UNIX,SOCK_STREAM|SOCK_CLOEXEC,0);char next_name[128];
         if(next<3||connect(next,(struct sockaddr *)&address,sizeof(address))||relay_auth_implicit(next,guid)||
             method(next,"Hello",1,0,next_name,sizeof(next_name))||method(next,"GetId",2,0,body,sizeof(body))||
-            policy_call(next,"org.freedesktop.DBus","AddMatch",3,1,own_second_rule,NULL)||policy_driver_change(fd,next_name)||close(next)||
+            policy_call(next,"org.freedesktop.DBus","AddMatch",3,1,own_second_rule,NULL)||
+            (errors&&policy_call(next,"org.freedesktop.DBus","RequestName",4,4,"org.example.LisaDenied","org.freedesktop.DBus.Error.AccessDenied"))||
+            policy_driver_change(fd,next_name)||close(next)||
             policy_driver_transition(fd,next_name,1)||method(fd,"GetId",6,0,body,sizeof(body)))return 9;
     }
     if(close(fd))return 9;
@@ -1033,7 +1037,7 @@ static int run_sdk(const char *base,const char *root,const char *own,const char 
         if(ptrace(PTRACE_TRACEME,0,NULL,NULL)||vendor_identity_prepare(57342)||platform_sdk_guard(parent)||unix_byte_channel_guard(channel,parent))_exit(85);
         if(raise(SIGSTOP))_exit(86);
         if(role)execl("/system/vendor/quasar/maind","maind","--platformd",(char *)NULL);
-        else if(provider)execl("/system/vendor/quasar/maind","sdk-bus-control",sdk_dual?"--sdk-two-control":sdk_bluez==2?"--sdk-adapter-control":"--sdk-bluez-control",primary_text,parent_text,provider->name,(char *)NULL);
+        else if(provider)execl("/system/vendor/quasar/maind","sdk-bus-control",sdk_errors?"--sdk-error-control":sdk_dual?"--sdk-two-control":sdk_bluez==2?"--sdk-adapter-control":"--sdk-bluez-control",primary_text,parent_text,provider->name,(char *)NULL);
         else execl("/system/vendor/quasar/maind","sdk-bus-control","--sdk-control",fd_text,parent_text,(char *)NULL);
         _exit(87);
     }
@@ -1090,20 +1094,50 @@ static int finish_sdk_relay(struct relay_handle *handle,unsigned role,unsigned s
     printf("{\"event\":\"sdk-bus-relay\",\"role\":\"%s\",\"boundary_ok\":%s,\"actor_checks\":%u,\"result\":%d,\"origin\":%d,\"protocol_traffic\":%s,\"auth_verified\":%s%s}\n",
         role?"platform":"own-elf",good?"true":"false",report.checks,report.stats.result,report.stats.origin,traffic?"true":"false",report.stats.authenticated?"true":"false",sdk_dual?(slot?",\"slot\":1":",\"slot\":0"):"");fflush(stdout);return good?0:-1;
 }
+static int audit_pipe_view(pid_t child,int audit,int log){
+    char path[80];struct stat expected,actual,other;
+    snprintf(path,sizeof(path),"/proc/%ld/fd/1",(long)child);
+    return audit>=3&&log>=3&&!fstat(audit,&expected)&&S_ISFIFO(expected.st_mode)&&!fstat(log,&other)&&
+        (expected.st_dev!=other.st_dev||expected.st_ino!=other.st_ino)&&!stat(path,&actual)&&S_ISFIFO(actual.st_mode)&&
+        actual.st_dev==expected.st_dev&&actual.st_ino==expected.st_ino;
+}
+static int save_driver_denials(const char *base,unsigned role,int fd,const struct sdk_match_observer *observer,int reaped,int attested){
+    unsigned char bytes[DRIVER_DENIAL_LIMIT*DRIVER_DENIAL_WIRE+1];size_t used=0;int valid=reaped&&attested,closed=0,saved=0,known=0;
+    ssize_t got=0;while(used<sizeof(bytes)&&(got=read(fd,bytes+used,sizeof(bytes)-used))>0)used+=(size_t)got;
+    if(got<0||used==sizeof(bytes)||used%DRIVER_DENIAL_WIRE||!used||!observer->names.finished||observer->names.active)valid=0;
+    if(!close(fd))closed=1;else valid=0;
+    unsigned count=(unsigned)(used/DRIVER_DENIAL_WIRE);
+    for(unsigned i=0;valid&&i<count;++i){struct driver_denial_record record;unsigned belongs=0;
+        if(driver_denial_decode(bytes+i*DRIVER_DENIAL_WIRE,DRIVER_DENIAL_WIRE,&record)){valid=0;break;}
+        for(unsigned j=0;j<observer->names.count;++j)if(!strcmp(record.sender,observer->names.peak[j].name))belongs=1;
+        if(!belongs){valid=0;break;}
+        if(count==1&&strstr(record.body.text,"org.example.LisaDenied"))known=1;
+    }
+    if(valid){char path[PATH_MAX];int n=snprintf(path,sizeof(path),"%s/sdk%u-driver-errors.private.bin",base,role);
+        if(n>0&&n<(int)sizeof(path)){int output=open(path,O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);
+            if(output>=0){int failed=store_write_all(output,(const char *)bytes,used)||fsync(output);if(close(output))failed=1;if(!failed)saved=1;}
+        }
+    }
+    printf("{\"event\":\"sdk-driver-denials\",\"role\":\"%s\",\"records\":%u,\"sdk_history_only\":%s,\"private_saved\":%s,\"pipe_attested\":%s,\"pipe_closed\":%s,\"own_denial_verified\":%s}\n",
+        role?"platform":"own-elf",count,valid?"true":"false",saved?"true":"false",attested?"true":"false",closed?"true":"false",!role&&known?"true":"false");fflush(stdout);
+    memset(bytes,0,sizeof(bytes));return valid&&saved&&closed&&(role||known)?0:-1;
+}
 static int sdk_bus_epoch(const char *base,const char *own,const char *server_binding,const char *client_binding,unsigned role,int policy_only){
     unsigned directory=policy_only?2:role;char root[PATH_MAX];struct sockaddr_un endpoint={.sun_family=AF_UNIX};int reload[2];
     if(snprintf(root,sizeof(root),"%s/root%u",base,directory)>=(int)sizeof(root)||mkdir(root,0700)||
         snprintf(endpoint.sun_path,sizeof(endpoint.sun_path),"%s/listener%u",base,directory)>=(int)sizeof(endpoint.sun_path))return -1;
     int listener=socket(AF_UNIX,SOCK_STREAM|SOCK_CLOEXEC|SOCK_NONBLOCK,0);
     if(listener<0||bind(listener,(struct sockaddr *)&endpoint,sizeof(endpoint))||listen(listener,4)||socketpair(AF_UNIX,SOCK_STREAM|SOCK_CLOEXEC,0,reload))return -1;
-    int logs[2];if(pipe2(logs,O_CLOEXEC))return -1;pid_t parent=getpid(),bus=fork();if(bus<0)return -1;
+    int logs[2],audit[2]={-1,-1};if(pipe2(logs,O_CLOEXEC))return -1;
+    if(sdk_errors&&(pipe2(audit,O_CLOEXEC)||fcntl(audit[1],F_GETPIPE_SZ)<(int)(DRIVER_DENIAL_LIMIT*DRIVER_DENIAL_WIRE)))return -1;
+    pid_t parent=getpid(),bus=fork();if(bus<0)return -1;
     if(!bus){
         if(prctl(PR_SET_PDEATHSIG,SIGKILL)||getppid()!=parent)_exit(80);
         char path[PATH_MAX],text[96];struct process_stamp stamp;if(process_stamp(getpid(),&stamp)||snprintf(path,sizeof(path),"%s.child",root)>=(int)sizeof(path))_exit(80);
         int file=open(path,O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);int used=snprintf(text,sizeof(text),"%ld %" PRIu64 "\n",(long)getpid(),stamp.ticks);
         if(file<0||store_write_all(file,text,(size_t)used)||close(file))_exit(80);
         int zero=open("/dev/null",O_RDWR|O_CLOEXEC);if(zero<0)_exit(81);
-        if(dup2(zero,0)<0||dup2(zero,1)<0||dup2(logs[1],2)<0)_exit(81);for(int i=0;i<3;++i)if(fcntl(i,F_SETFD,0))_exit(81);
+        if(dup2(zero,0)<0||dup2(sdk_errors?audit[1]:zero,1)<0||dup2(logs[1],2)<0)_exit(81);for(int i=0;i<3;++i)if(fcntl(i,F_SETFD,0))_exit(81);
         /* Own controls can emit exactly their canary signal, so its absence
          * at the subscriber tests RECEIVE policy rather than default SEND
          * denial. The actual SDK never receives that fixture-only permission. */
@@ -1111,19 +1145,21 @@ static int sdk_bus_epoch(const char *base,const char *own,const char *server_bin
         char fd[24],pair[48];snprintf(fd,sizeof(fd),"%d",listener);snprintf(pair,sizeof(pair),"%d,%d",reload[0],reload[1]);
         for(unsigned i=3;i<6;++i)if(fcntl(keep[i],F_SETFD,0))_exit(83);
         struct rlimit cpu={3,4},data={32u*1024*1024,32u*1024*1024},files={64,64},core={0,0};
-        if(setenv("LD_PRELOAD","/opt/lisa/server.so",1)||setenv("LD_BIND_NOW","1",1)||setenv("LISA_LISTENER_FD",fd,1)||setenv("LISA_RELOAD_FDS",pair,1)||
+        if((sdk_errors&&setenv("LISA_DRIVER_ERROR_AUDIT",policy_only?"0":"1",1))||setenv("LD_PRELOAD","/opt/lisa/server.so",1)||setenv("LD_BIND_NOW","1",1)||setenv("LISA_LISTENER_FD",fd,1)||setenv("LISA_RELOAD_FDS",pair,1)||
             setrlimit(RLIMIT_CPU,&cpu)||setrlimit(RLIMIT_DATA,&data)||setrlimit(RLIMIT_NOFILE,&files)||setrlimit(RLIMIT_CORE,&core)||bus_guard(parent))_exit(83);
         alarm(20);if(raise(SIGSTOP))_exit(84);
         execl("/usr/bin/dbus-daemon","dbus-daemon","--nofork","--nosyslog","--nopidfile","--config-file=/etc/private-bus.conf",(char *)NULL);_exit(85);
     }
-    close(logs[1]);int status=0;pid_t done;do{done=waitpid(bus,&status,WUNTRACED);}while(done<0&&errno==EINTR);
-    int good=done==bus&&WIFSTOPPED(status)&&WSTOPSIG(status)==SIGSTOP&&private_view(bus,listener,reload,1,0);check(good);
+    close(logs[1]);if(sdk_errors)close(audit[1]);int status=0;pid_t done;do{done=waitpid(bus,&status,WUNTRACED);}while(done<0&&errno==EINTR);
+    int attested=!sdk_errors||audit_pipe_view(bus,audit[0],logs[0]);
+    int good=done==bus&&WIFSTOPPED(status)&&WSTOPSIG(status)==SIGSTOP&&private_view(bus,listener,reload,1,0)&&attested;check(good);
     struct relay_handle relay[2]={{.pid=-1,.report=-1},{.pid=-1,.report=-1}};struct sdk_match_observer observer={.fd=-1};struct sdk_empty_provider provider={.fd=-1};
     if(good){
         if(kill(bus,SIGCONT))good=0;
         char path[80];struct stat expected,actual;snprintf(path,sizeof(path),"/proc/%ld/exe",(long)bus);int ready=0;
         if(!stat("/usr/bin/dbus-daemon",&expected))for(unsigned i=0;i<300;++i){if(!stat(path,&actual)&&actual.st_dev==expected.st_dev&&actual.st_ino==expected.st_ino){ready=1;break;}struct timespec pause={0,10000000};nanosleep(&pause,NULL);}
-        if(!ready||!private_view(bus,listener,reload,0,0))good=0;
+        if(sdk_errors)attested=attested&&audit_pipe_view(bus,audit[0],logs[0]);
+        if(!ready||!private_view(bus,listener,reload,0,0)||!attested)good=0;
         if(good&&!policy_only&&(role||sdk_dual)&&sdk_bluez&&provider_open(endpoint.sun_path,&provider))good=0;
         if(good&&((policy_only||(!role&&!sdk_dual))?subscription_policy(endpoint.sun_path,&observer,sdk_bluez?&provider:NULL):observer_open(endpoint.sun_path,&observer,sdk_bluez?&provider:NULL)))good=0;
         int clients[2]={-1,-1};unsigned streams=sdk_dual?2:1;
@@ -1168,6 +1204,10 @@ static int sdk_bus_epoch(const char *base,const char *own,const char *server_bin
         do{done=waitpid(bus,&status,0);}while(done<0&&errno==EINTR);
         if(done!=bus||!WIFEXITED(status)||WEXITSTATUS(status))good=0;
     }else if(done==bus&&WIFSTOPPED(status)){kill(bus,SIGKILL);waitpid(bus,&status,0);}
+    if(sdk_errors){
+        if(!policy_only){if(save_driver_denials(base,role,audit[0],&observer,done==bus&&WIFEXITED(status)&&!WEXITSTATUS(status),attested))good=0;}
+        else{char unexpected;ssize_t n=read(audit[0],&unexpected,1);int closed=close(audit[0]);if(n||closed)good=0;}
+    }
     char private_log[8192],path[PATH_MAX];size_t size=0;ssize_t got;
     while(size<sizeof(private_log)&&(got=read(logs[0],private_log+size,sizeof(private_log)-size))>0)size+=(size_t)got;close(logs[0]);
     if(snprintf(path,sizeof(path),"%s/sdk%u-bus-stderr.private.txt",base,directory)>=(int)sizeof(path))good=0;
@@ -1273,11 +1313,12 @@ static int coordinator(const char *base,const char *executable,const char *bindi
 }
 int main(int argc,char **argv){
     if(argc==2&&!strcmp(argv[1],"--actor"))return own_actor();
-    if((argc==4&&!strcmp(argv[1],"--sdk-control"))||(argc==5&&(!strcmp(argv[1],"--sdk-bluez-control")||!strcmp(argv[1],"--sdk-adapter-control")||!strcmp(argv[1],"--sdk-two-control")))){
+    if((argc==4&&!strcmp(argv[1],"--sdk-control"))||(argc==5&&(!strcmp(argv[1],"--sdk-bluez-control")||!strcmp(argv[1],"--sdk-adapter-control")||!strcmp(argv[1],"--sdk-two-control")||!strcmp(argv[1],"--sdk-error-control")))){
         long values[2];for(unsigned i=0;i<2;++i){char *end;values[i]=strtol(argv[i+2],&end,10);if(*end||values[i]<3||values[i]>INT_MAX)return 2;}
         if(getppid()!=values[1])return 2;
         if(argc==5&&!empty_objects_name_size(argv[4]))return 2;
-        return sdk_bus_control((int)values[0],(pid_t)values[1],argc==5?argv[4]:NULL,!strcmp(argv[1],"--sdk-adapter-control")||!strcmp(argv[1],"--sdk-two-control"),!strcmp(argv[1],"--sdk-two-control"));
+        int errors=!strcmp(argv[1],"--sdk-error-control"),dual=errors||!strcmp(argv[1],"--sdk-two-control");
+        return sdk_bus_control((int)values[0],(pid_t)values[1],argc==5?argv[4]:NULL,dual||!strcmp(argv[1],"--sdk-adapter-control"),dual,errors);
     }
     if(argc==7&&!strcmp(argv[1],"--client-actor")){
         long values[5];for(unsigned i=0;i<5;++i){char *end;values[i]=strtol(argv[i+2],&end,10);if(*end||values[i]<(i==4?1:3)||values[i]>INT_MAX)return 2;}
@@ -1289,8 +1330,8 @@ int main(int argc,char **argv){
         if(values[0]==values[1]||values[0]==values[2]||values[1]==values[2]||getppid()!=values[3])return 2;
         return relay_actor((int)values[0],(int)values[1],(int)values[2],(pid_t)values[3]);
     }
-    if(argc!=5||(strcmp(argv[1],"--run")&&strcmp(argv[1],"--run-sdk")&&strcmp(argv[1],"--run-sdk-bluez")&&strcmp(argv[1],"--run-sdk-adapter")&&strcmp(argv[1],"--run-sdk-two"))||getuid()||geteuid()||getgid()||getegid())return 2;
-    sdk_dual=!strcmp(argv[1],"--run-sdk-two");sdk_bluez=(sdk_dual||!strcmp(argv[1],"--run-sdk-adapter"))?2:!strcmp(argv[1],"--run-sdk-bluez");int sdk=sdk_bluez||!strcmp(argv[1],"--run-sdk");
+    if(argc!=5||(strcmp(argv[1],"--run")&&strcmp(argv[1],"--run-sdk")&&strcmp(argv[1],"--run-sdk-bluez")&&strcmp(argv[1],"--run-sdk-adapter")&&strcmp(argv[1],"--run-sdk-two")&&strcmp(argv[1],"--run-sdk-error-audit"))||getuid()||geteuid()||getgid()||getegid())return 2;
+    sdk_errors=!strcmp(argv[1],"--run-sdk-error-audit");sdk_dual=sdk_errors||!strcmp(argv[1],"--run-sdk-two");sdk_bluez=(sdk_dual||!strcmp(argv[1],"--run-sdk-adapter"))?2:!strcmp(argv[1],"--run-sdk-bluez");int sdk=sdk_bluez||!strcmp(argv[1],"--run-sdk");
     if(sdk){
         char pattern[1024];int fd=open("/proc/sys/kernel/core_pattern",O_RDONLY|O_NOFOLLOW|O_CLOEXEC);if(fd<0)return 2;
         ssize_t count=read(fd,pattern,sizeof(pattern));int closed=close(fd);

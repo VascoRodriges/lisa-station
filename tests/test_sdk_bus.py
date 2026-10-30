@@ -335,3 +335,61 @@ def test_dual_channels_reject_unowned_or_unretired_source_evidence(index, key, v
     rows = dual_evidence()
     rows[index][key] = value
     assert not evaluate_events(rows, dual_channels=True)
+
+
+def driver_error_evidence():
+    rows = dual_evidence()
+    for index, role in [(6, "own-elf"), (12, "platform")]:
+        rows.insert(index, dict(event="sdk-driver-denials", role=role, records=1, sdk_history_only=True,
+                                private_saved=True, pipe_attested=True, pipe_closed=True, own_denial_verified=role == "own-elf"))
+    return rows
+
+
+def test_driver_error_audit_requires_own_denial_and_explicit_profile():
+    assert evaluate_events(driver_error_evidence(), error_audit=True)
+    assert not evaluate_events(dual_evidence(), error_audit=True)
+    assert not evaluate_events(driver_error_evidence(), dual_channels=True)
+    assert not evaluate_events(driver_error_evidence(), error_audit=True, dual_channels=True)
+    with pytest.raises(ValueError):
+        diagnostic_script(error_audit=True, dual_channels=True)
+    script = diagnostic_script(error_audit=True)
+    assert "PROBE --run-sdk-error-audit " in script
+    assert script.count("/root[012]-channel[01]-relay.child") == 2
+    assert script.count("for channel in 0 1; do") == 2
+    assert "rm -r" not in script
+
+
+@pytest.mark.parametrize("index,key,value", [
+    (6, "records", 0), (6, "records", 2), (6, "records", True),
+    (12, "records", 0), (12, "records", 5), (12, "records", 1.0),
+    (6, "private_saved", False), (12, "private_saved", 1),
+    (6, "own_denial_verified", False), (6, "own_denial_verified", 1),
+    (12, "own_denial_verified", True), (12, "own_denial_verified", 0),
+    (6, "pipe_attested", False), (12, "pipe_closed", False), (12, "sdk_history_only", False),
+    (3, "auth_verified", False), (9, "boundary_ok", False),
+    (11, "group_finished", False), (11, "sdk_subscription_removed", False),
+])
+def test_driver_error_audit_rejects_unbound_incomplete_or_untyped_proofs(index, key, value):
+    rows = driver_error_evidence()
+    rows[index][key] = value
+    assert not evaluate_events(rows, error_audit=True)
+
+
+@pytest.mark.parametrize("index", range(18))
+def test_driver_error_audit_requires_ordered_complete_unique_typed_events(index):
+    rows = driver_error_evidence()
+    del rows[index]
+    assert not evaluate_events(rows, error_audit=True)
+    rows = driver_error_evidence()
+    rows.insert(index, deepcopy(rows[index]))
+    assert not evaluate_events(rows, error_audit=True)
+    rows = driver_error_evidence()
+    rows[index]["unexpected"] = True
+    assert not evaluate_events(rows, error_audit=True)
+
+
+@pytest.mark.parametrize("count", [1, 2, 3, 4])
+def test_driver_error_audit_bounds_actual_records(count):
+    rows = driver_error_evidence()
+    rows[12]["records"] = count
+    assert evaluate_events(rows, error_audit=True)

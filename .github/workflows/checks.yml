@@ -64,6 +64,7 @@ jobs:
       - run: python controller/build.py --target bus-auth-probe
       - run: python controller/build.py --target bus-relay-probe
       - run: python controller/build.py --target private-bus-factory
+      - run: python controller/build.py --target private-bus-error-factory
       - run: python controller/build.py --target station-init
       - run: python controller/build.py --target boot-runner-probe
       - run: python controller/build.py --target boot-dispatch-probe
@@ -128,6 +129,8 @@ jobs:
             ./build/sdk-ledger-host --selftest
             cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/error_text_probe.c -o build/error-text-host
             ./build/error-text-host --selftest
+            cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/driver_error_probe.c -ldl -l:libdbus-1.so.3 -o build/driver-error-host
+            ./build/driver-error-host --selftest
           cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/bus_relay_probe.c -o build/bus-relay-host
           ./build/bus-relay-host --selftest
           cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror -shared -fPIC controller/private_bus_factory.c -o build/private-bus-factory-host.so
@@ -319,5 +322,6 @@ jobs:
           path: |
             build/private-bus-probe.armhf
             build/private-bus-factory.so
+            build/private-bus-error-factory.so
             build/bus-auth-probe.armhf
             build/bus-relay-probe.armhf

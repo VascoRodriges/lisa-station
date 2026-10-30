@@ -155,6 +155,10 @@ separate obligations of the coordinator.
 The [bounded private error-text decoder](docs/PRIVATE_ERROR_TEXT.md) prepares
 the next denied-name audit, without changing any bus permission.
 
+The [private driver denial audit](docs/PRIVATE_DRIVER_DENIALS.md) now identifies
+the SDK's requested service name, retaining ownership denial and the same bus
+policy. It records no audio and is not a production isolation claim.
+
 The [explicit two-channel SDK diagnostic](docs/DUAL_SDK_CHANNELS.md) now composes
 those ownership and retirement checks. Both SDK connections authenticate and
 close through separate relays; the next denied dependency is service-name

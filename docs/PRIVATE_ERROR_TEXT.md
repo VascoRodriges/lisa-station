@@ -3,8 +3,9 @@
 The audio-free dual-channel SDK diagnostic reaches a denied service-name
 request. Its generic exception omits the driver's explanation. Before adding
 an explicit private error-copy audit, `private_error_text.h` qualifies the
-small body decoder that such an audit needs. It is not yet connected to the
-bus diagnostic and grants no ownership or receive permission.
+small body decoder that such an audit needs. The subsequent driver diagnostic
+now uses it for private records; the decoder grants no ownership or receive
+permission.
 
 The input is an already delimited **little-endian body** and bounded signature
 from a separately validated message. Only signature `s` is accepted. The body
@@ -28,7 +29,9 @@ overlong, surrogate or out-of-range sequences; and complete output clearing.
 CI runs the fortified fixture. ARM compilation is verified separately; no new
 device build target, microphone recording or speaker trial is needed.
 
-Next is an explicitly enabled, bounded audit of driver AccessDenied copies on
-the disposable private bus, with a known denied-name control before the SDK.
+The subsequent [private driver audit](PRIVATE_DRIVER_DENIALS.md) now uses this
+decoder for bounded records from the daemon's error-construction path, with
+a known denied-name control before the SDK. Ordinary error-match copies did
+not receive the control, and no monitoring permission was introduced.
 The existing name denial, two-source admission and relay retirement remain.
 Permanent switching and production isolation remain unfinished.

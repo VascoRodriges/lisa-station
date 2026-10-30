@@ -300,3 +300,10 @@ the exact one-string body needed to attribute that denied service-name request.
 Its 2106 synthetic checks include fortified and sanitizer runs. It changes no
 bus policy and has no live connection; the explicit private driver-error audit
 and subsequent ownership review remain the next steps.
+
+The [private driver denial audit](PRIVATE_DRIVER_DENIALS.md) now attributes the
+denied name to `ru.yandex.quasar`, retaining the denial and all existing bus
+permissions. An optional daemon hook, separate attested pipe and finished SDK
+name history qualify 18 ordered events after an own denied-name control.
+The next step is an exact-name ownership profile with registration/retirement
+and unrelated-name rejection controls; full service and production work remain.

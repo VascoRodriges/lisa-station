@@ -5,6 +5,9 @@
 #include <stdatomic.h>
 #include <stdlib.h>
 #include "unix_byte_adapter.h"
+#ifdef LISA_PRIVATE_ERROR_AUDIT
+#include "driver_error_hook.h"
+#endif
 static struct stat listener;
 static int source;
 static pid_t parent;
@@ -38,6 +41,10 @@ __attribute__((constructor)) static void prepare(void){
         reload_sources[i]=(int)number;if(i==0){if(*text++!=',')_exit(125);}else if(*text)_exit(125);
     }
     if(reload_channels[0].device==reload_channels[1].device&&reload_channels[0].inode==reload_channels[1].inode)_exit(125);
+#ifdef LISA_PRIVATE_ERROR_AUDIT
+    text=getenv("LISA_DRIVER_ERROR_AUDIT");
+    if(!text||(strcmp(text,"0")&&strcmp(text,"1"))||driver_error_prepare(!strcmp(text,"1")))_exit(125);
+#endif
 }
 static int same_listener(int fd){struct stat info;return getppid()==parent&&!fstat(fd,&info)&&info.st_dev==listener.st_dev&&info.st_ino==listener.st_ino;}
 int socket(int domain,int type,int protocol){
