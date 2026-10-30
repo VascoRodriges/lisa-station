@@ -326,3 +326,9 @@ admission, read-only ioctl filtering and owned cleanup. Eight real speaker
 epochs cover normal data, malformed/replayed requests and backend death.
 The SDK still receives no raw control FD; ALSA-plugin composition, persistent
 operation and all production switching/voice phases remain pending.
+
+The experimental [ALSA control plugin](MASTER_CONTROL_PLUGIN.md) now exposes one
+read-only logical Master through the bounded GET transport. Host ABI tests use
+the real hash-pinned public ALSA library and an explicitly synthetic packet
+provider. Real speaker/plugin composition and third SDK-capability admission
+are still required before this can supply the SDK's mixer dependency.

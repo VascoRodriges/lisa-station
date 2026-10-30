@@ -168,7 +168,9 @@ dependency without adding hardware permissions or replacing its real result.
 
 A standalone [Master read broker](docs/MASTER_READ_BROKER.md) now returns actual
 volume through a GET-only interface without passing the sound-control FD to
-its client. SDK/plugin integration remains pending.
+its client. An experimental [ALSA control plugin](docs/MASTER_CONTROL_PLUGIN.md)
+now passes host ABI tests against the public ALSA library with an explicitly
+synthetic packet provider. Real speaker/plugin and SDK composition remain pending.
 
 The [explicit two-channel SDK diagnostic](docs/DUAL_SDK_CHANNELS.md) now composes
 those ownership and retirement checks. Both SDK connections authenticate and
@@ -196,5 +198,7 @@ python controller/build.py --zig zig
 No firmware libraries, device account data, model weights, household recordings,
 SSH credentials or private infrastructure configuration are distributed.
 
-MIT license. This is an independent community project, not affiliated with
+Original project code uses the MIT license. The optional ALSA plugin build uses
+public ALSA headers under LGPL-2.1-or-later; its artifacts carry the upstream
+license and provenance. This is an independent community project, not affiliated with
 Yandex, Home Assistant or Nabu Casa.
