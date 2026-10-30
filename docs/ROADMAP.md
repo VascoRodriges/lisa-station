@@ -282,3 +282,8 @@ The [allocation diagnostic](CHANNEL_ALLOCATION_DIAGNOSTIC.md) now attributes
 EMFILE to the supplied one-shot channel budget, independently of generic SDK
 exception text. It preserves allocation and kernel policy. Two-channel SDK
 ownership/admission, separate relay lifecycles and retirement remain required.
+
+The [two-name SDK group ledger](SDK_NAME_LEDGER.md) now qualifies peak-rule
+tracking, permanent name retirement and final observer-only reconciliation.
+It does not map a bus name to a socket slot, admit channels or authenticate
+roles; exclusive source/relay ownership and actual two-stream integration remain.

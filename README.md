@@ -148,6 +148,10 @@ The [allocation diagnostic](docs/CHANNEL_ALLOCATION_DIAGNOSTIC.md) now confirms
 that this refusal comes from the one-shot channel budget. Independent
 two-channel SDK admission and teardown remain the next composition step.
 
+The [two-name group ledger](docs/SDK_NAME_LEDGER.md) now qualifies metadata
+retirement without name reuse. It is a pure prerequisite; the live SDK still
+receives one channel while two-stream ownership and admission are prepared.
+
 ## Development
 
 Use Python 3.14 on Linux in an isolated virtual environment:
