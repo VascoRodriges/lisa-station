@@ -245,5 +245,10 @@ through the private gate. A [separate subscription lab profile](PRIVATE_BUS_SUBS
 now permits its first AddMatch with driver-only reception and a one-rule quota.
 Own controls verify broad/eavesdropping matches do not bypass receive policy,
 forbidden methods remain denied and connections close. Further subscriptions,
-service compatibility,
-service schemas and the full permanent switching/voice/HA roadmap remain open.
+service compatibility, service schemas and the full permanent switching/voice/HA
+roadmap remain open.
+
+A [bounded match-rule metadata decoder](PRIVATE_MATCH_SNAPSHOT.md) now qualifies
+the private daemon's Stats reply format with synthetic fixtures. It does not yet
+call that API or capture SDK subscriptions. Parent-observer admission, live own
+controls, private evidence storage and teardown must be qualified next.
