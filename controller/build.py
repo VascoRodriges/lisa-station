@@ -42,6 +42,8 @@ parser.add_argument(
         "platform-sdk-probe",
         "unix-channel-probe",
         "unix-bus-factory",
+        "private-bus-probe",
+        "private-bus-factory",
         "station-init",
         "boot-runner-probe",
         "boot-dispatch-probe",
@@ -89,6 +91,8 @@ sources = {
     "platform-sdk-probe": "platform_sdk_probe.c",
     "unix-channel-probe": "unix_channel_probe.c",
     "unix-bus-factory": "unix_bus_factory.c",
+    "private-bus-probe": "private_bus_probe.c",
+    "private-bus-factory": "private_bus_factory.c",
     "station-init": "station_init.c",
     "boot-runner-probe": "boot_runner_probe.c",
     "boot-dispatch-probe": "boot_dispatch_probe.c",
@@ -102,7 +106,14 @@ sources = {
 output = (
     root
     / "build"
-    / (args.target + (".so" if args.target in {"time-clock-proof", "unix-bus-factory"} else ".armhf"))
+    / (
+        args.target
+        + (
+            ".so"
+            if args.target in {"time-clock-proof", "unix-bus-factory", "private-bus-factory"}
+            else ".armhf"
+        )
+    )
 )
 output.parent.mkdir(exist_ok=True)
 assert subprocess.check_output([args.zig, "version"], text=True).strip() == "0.14.1"
@@ -125,7 +136,11 @@ subprocess.run(
             else []
         ),
         *(["-ldl"] if args.target in {"diagnostics-guard-probe", "time-clock-proof"} else []),
-        *(["-shared", "-fPIC"] if args.target in {"time-clock-proof", "unix-bus-factory"} else []),
+        *(
+            ["-shared", "-fPIC"]
+            if args.target in {"time-clock-proof", "unix-bus-factory", "private-bus-factory"}
+            else []
+        ),
         "-o",
         str(output),
     ],

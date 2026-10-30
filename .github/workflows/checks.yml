@@ -60,6 +60,8 @@ jobs:
       - run: python controller/build.py --target platform-sdk-probe
       - run: python controller/build.py --target unix-channel-probe
       - run: python controller/build.py --target unix-bus-factory
+      - run: python controller/build.py --target private-bus-probe
+      - run: python controller/build.py --target private-bus-factory
       - run: python controller/build.py --target station-init
       - run: python controller/build.py --target boot-runner-probe
       - run: python controller/build.py --target boot-dispatch-probe
@@ -110,6 +112,7 @@ jobs:
           cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror -pthread controller/unix_channel_probe.c -o build/unix-channel-host
           ./build/unix-channel-host --selftest
           cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror -pthread -shared -fPIC controller/unix_bus_factory.c -o build/unix-bus-factory-host.so
+          cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror -shared -fPIC controller/private_bus_factory.c -o build/private-bus-factory-host.so
           chmod 700 build/unix-bus-factory-host.so
           (ulimit -s 32768; ./build/unix-channel-host --factory-selftest ./build/unix-bus-factory-host.so)
           cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/boot_runner_probe.c -o build/boot-runner-host
@@ -292,3 +295,9 @@ jobs:
         with:
           name: station-unix-bus-factory-armhf
           path: build/unix-bus-factory.so
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: station-private-bus-diagnostic-armhf
+          path: |
+            build/private-bus-probe.armhf
+            build/private-bus-factory.so

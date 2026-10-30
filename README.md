@@ -99,6 +99,11 @@ The [kernel IPC queue guard](docs/IPC_QUEUES.md) adds inherited per-process
 denial of System V IPC and POSIX message queues, without changing host queues
 or unrelated applications. UNIX/file/mapping relays remain separate requirements.
 
+The [private standard-bus diagnostic](docs/PRIVATE_BUS_DIAGNOSTIC.md) now handles
+restricted own-client methods in two disposable filesystem epochs through
+preadmitted streams. It has not connected the SDK or host bus; the no-FD protocol
+contract and permanent mode switching remain unfinished.
+
 ## Development
 
 Use Python 3.14 on Linux in an isolated virtual environment:

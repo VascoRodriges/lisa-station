@@ -207,3 +207,9 @@ socket/message calls to a one-shot pool under the unchanged syscall guard. Seven
 own-client cases cover constructor rejection, object identity and concurrent
 claims. Actual SDK/private-bus protocols, receiver revocation and permanent
 switching remain unfinished; the real bus and audio were not opened.
+
+The [private standard-bus diagnostic](PRIVATE_BUS_DIAGNOSTIC.md) now runs the
+actual daemon in a fresh filesystem through preadmitted listener/reload streams.
+Two epochs authenticate and answer restricted methods without opening the host
+bus. Its FD-negotiation contract is still incompatible with byte-only transport;
+actual SDK service schemas and permanent mode/boot composition remain pending.
