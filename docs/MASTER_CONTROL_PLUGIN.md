@@ -62,11 +62,12 @@ python -m controller.qualify_master_plugin
 python -m controller.qualify_master_plugin --sanitize
 ```
 
-The ARM module is built; **it has not yet been loaded on the speaker**. Next
-is an own-client composition with the real read-only broker and firmware ALSA
-library, then SDK-only configuration and separately qualified third-capability
-admission. Existing SDK descriptors, bus source budgets, hardware permissions,
-production modes, microphone and second station are unchanged by this stage.
+The subsequent [real speaker composition](MASTER_PLUGIN_READ.md) now loads the
+ARM module with the firmware ALSA library and verifies actual Master values
+using own clients. The normal ALSA configuration loader, SDK-only configuration
+and separately qualified third-capability admission remain next. Existing SDK
+descriptors, bus source budgets, production modes, microphone and second
+station are unchanged.
 
 Primary ABI sources: [external control declarations](https://github.com/alsa-project/alsa-lib/blob/v1.2.1.2/include/control_external.h),
 [external control implementation](https://github.com/alsa-project/alsa-lib/blob/v1.2.1.2/src/control/control_ext.c),

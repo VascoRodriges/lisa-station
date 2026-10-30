@@ -64,6 +64,7 @@ jobs:
       - run: python controller/build.py --target private-bus-probe
       - run: python controller/build.py --target master-read-probe
       - run: python controller/build.py --target master-ctl-plugin
+      - run: python controller/build.py --target master-plugin-read-probe
       - run: python -m controller.qualify_master_plugin
       - run: python controller/build.py --target bus-auth-probe
       - run: python controller/build.py --target bus-relay-probe
@@ -341,6 +342,7 @@ jobs:
             build/unix-mixer-factory.so
             build/master-read-probe.armhf
             build/master-ctl-plugin.so
+            build/master-plugin-read-probe.armhf
             build/alsa-public-headers/COPYING.alsa-lib
             build/alsa-public-headers/PROVENANCE.txt
             build/bus-auth-probe.armhf

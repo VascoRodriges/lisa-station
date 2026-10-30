@@ -46,6 +46,7 @@ parser.add_argument(
         "private-bus-probe",
         "master-read-probe",
         "master-ctl-plugin",
+        "master-plugin-read-probe",
         "bus-auth-probe",
         "bus-relay-probe",
         "private-bus-factory",
@@ -101,6 +102,7 @@ sources = {
     "private-bus-probe": "private_bus_probe.c",
     "master-read-probe": "master_broker_probe.c",
     "master-ctl-plugin": "master_ctl_plugin.c",
+    "master-plugin-read-probe": "master_plugin_read_probe.c",
     "bus-auth-probe": "bus_auth_probe.c",
     "bus-relay-probe": "bus_relay_probe.c",
     "private-bus-factory": "private_bus_factory.c",
@@ -130,10 +132,12 @@ output = (
 output.parent.mkdir(exist_ok=True)
 assert subprocess.check_output([args.zig, "version"], text=True).strip() == "0.14.1"
 plugin_flags = []
-if args.target == "master-ctl-plugin":
+if args.target in {"master-ctl-plugin", "master-plugin-read-probe"}:
     from alsa_headers import prepare_headers
 
-    plugin_flags = ["-DPIC", "-I" + str(prepare_headers(root))]
+    plugin_flags = ["-I" + str(prepare_headers(root))]
+    if args.target == "master-ctl-plugin":
+        plugin_flags += ["-DPIC"]
 subprocess.run(
     [
         args.zig,
@@ -146,13 +150,14 @@ subprocess.run(
         "-Wextra",
         "-Werror",
         str(root / "controller" / sources[args.target]),
+        *([str(root / "controller/master_plugin_actor.c")] if args.target == "master-plugin-read-probe" else []),
         *(
             ["-pthread"]
             if args.target
             in {"platform-worker-probe", "platform-sdk-probe", "unix-bus-factory", "unix-mixer-factory", "unix-channel-probe", "private-bus-probe", "master-ctl-plugin"}
             else []
         ),
-        *(["-ldl"] if args.target in {"diagnostics-guard-probe", "time-clock-proof", "private-bus-error-factory", "unix-mixer-factory", "private-bus-probe"} else []),
+        *(["-ldl"] if args.target in {"diagnostics-guard-probe", "time-clock-proof", "private-bus-error-factory", "unix-mixer-factory", "private-bus-probe", "master-plugin-read-probe"} else []),
         *(["-DLISA_PRIVATE_ERROR_AUDIT=1"] if args.target == "private-bus-error-factory" else []),
         *(["-DLISA_MIXER_DIAGNOSTIC=1"] if args.target == "unix-mixer-factory" else []),
         *plugin_flags,

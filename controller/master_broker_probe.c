@@ -22,6 +22,16 @@
 #include "master_read_guard.h"
 #include "hardvolume_mixer.h"
 #include "platform_storage.h"
+#ifdef MASTER_PLUGIN_LAB
+#include "master_plugin_actor.h"
+static const char *plugin_image;
+static unsigned plugin_child;
+#define MASTER_LAB_NONCE "/bkupgrade/data/opt/lisa-controller-lab/master-plugin-read."
+#define MASTER_LAB_IMAGE "/bkupgrade/data/opt/lisa-controller-lab/master-plugin-read-probe-"
+#else
+#define MASTER_LAB_NONCE "/bkupgrade/data/opt/lisa-controller-lab/master-read."
+#define MASTER_LAB_IMAGE "/bkupgrade/data/opt/lisa-controller-lab/master-read-probe-"
+#endif
 #ifndef __arm__
 #error This filesystem and real hardware composition requires the reviewed ARM ABI
 #endif
@@ -49,6 +59,9 @@ static int isolate(const char *root,const char *image){
     if(unshare(CLONE_NEWNS)||mount(NULL,"/",NULL,MS_REC|MS_PRIVATE,NULL)||mount("tmpfs",root,"tmpfs",MS_NOSUID|MS_NODEV,"size=1m,mode=755"))return -1;
     const char *dirs[]={"/lib","/usr","/usr/lib","/opt","/opt/lisa","/dev"};
     for(unsigned i=0;i<sizeof(dirs)/sizeof(dirs[0]);++i)if(diagnostics_directory(root,dirs[i]))return -1;
+#ifdef MASTER_PLUGIN_LAB
+    if(plugin_child&&(diagnostics_text(root,"/opt/lisa/master-ctl.so","")||platform_storage_bind_file(root,plugin_image,"/opt/lisa/master-ctl.so",1)))return -1;
+#endif
     if(diagnostics_bind(root,"/lib","/lib",0,0)||diagnostics_bind(root,"/usr/lib","/usr/lib",0,0)||
         diagnostics_text(root,"/master-read.marker","MASTER_READ_V1\n")||diagnostics_text(root,"/opt/lisa/actor","")||
         platform_storage_bind_file(root,image,"/opt/lisa/actor",1)||diagnostics_bind(root,"/dev/null","/dev/null",1,1)||
@@ -120,19 +133,37 @@ static int actor(int peer,int control,pid_t parent,unsigned role,unsigned mode,c
             if(error)master_session_fault(&session);
         }
     }else{
+#ifdef MASTER_PLUGIN_LAB
+        struct master_plugin_actor runtime={0};
+        if(master_actor_begin(&runtime,"/opt/lisa/master-ctl.so",peer,epoch))return 9;
+#endif
         unsigned count=mode==7?1:2;
-        for(unsigned sequence=1;sequence<=count;++sequence){unsigned char request[MASTER_REQUEST_BYTES],reply[MASTER_REPLY_BYTES+1];struct master_read_value value;
+        for(unsigned sequence=1;sequence<=count;++sequence){
+#ifdef MASTER_PLUGIN_LAB
+            unsigned level=0;if(master_actor_get(&runtime,&level)){good=0;break;}result.values[result.reads++]=level;
+#else
+            unsigned char request[MASTER_REQUEST_BYTES],reply[MASTER_REPLY_BYTES+1];struct master_read_value value;
             if(master_request_encode(epoch,sequence,request,sizeof(request))||packet(peer,request,sizeof(request),1,end)!=(int)sizeof(request)||
                 packet(peer,reply,sizeof(reply),0,end)!=MASTER_REPLY_BYTES||master_reply_decode(reply,MASTER_REPLY_BYTES,epoch,sequence,&value)||value.error){good=0;break;}
             result.values[result.reads++]=value.value;
+#endif
         }
         if(good&&mode==7){if(report(&result,2))good=0;else{unsigned char reply[MASTER_REPLY_BYTES+1];if(packet(peer,reply,sizeof(reply),0,end)!=0)good=0;}}
         else if(good&&mode){unsigned char invalid[MASTER_REQUEST_BYTES+1];master_request_encode(epoch,mode==1?1:3,invalid,MASTER_REQUEST_BYTES);size_t size=MASTER_REQUEST_BYTES;
             if(mode==2)invalid[8]^=1;else if(mode==3)master_put32(invalid+28,2);else if(mode==4){invalid[size++]=0;}else if(mode==5)--size;else if(mode==6)invalid[32]=1;
             unsigned char reply[MASTER_REPLY_BYTES+1];if(packet(peer,invalid,size,1,end)!=(int)size||packet(peer,reply,sizeof(reply),0,end)!=0)good=0;else result.rejected=1;
         }
+#ifdef MASTER_PLUGIN_LAB
+        if(mode==7&&good){unsigned level=999;if(master_actor_get(&runtime,&level)!=-EPIPE||level)good=0;}
+        if(master_actor_end(&runtime))good=0;
+#endif
     }
-    if(close(peer))good=0;else{errno=0;if(fcntl(peer,F_GETFD)>=0||errno!=EBADF)good=0;else result.closed=1;}
+#ifdef MASTER_PLUGIN_LAB
+    if(!role&&close(peer))good=0;
+#else
+    if(close(peer))good=0;
+#endif
+    errno=0;if(fcntl(peer,F_GETFD)>=0||errno!=EBADF)good=0;else result.closed=1;
     if(control>=3&&close(control))good=0;
     check(good);if(report(&result,3))return 9;return failures?9:0;
 }
@@ -144,6 +175,11 @@ static int private_view(const struct actor_handle *actor,int executed){
     const char *hidden[]={"/proc","/sys","/data","/bkupgrade","/tmp","/dev/snd","/dev/shm","/var/run/dbus"};
     for(unsigned i=0;i<sizeof(hidden)/sizeof(hidden[0]);++i){snprintf(path,sizeof(path),"/proc/%ld/root%s",(long)actor->pid,hidden[i]);if(!lstat(path,&actual)||errno!=ENOENT)return 0;}
     snprintf(path,sizeof(path),"/proc/%ld/exe",(long)actor->pid);if(stat(path,&actual)||actual.st_dev!=actor->image.st_dev||actual.st_ino!=actor->image.st_ino)return 0;
+#ifdef MASTER_PLUGIN_LAB
+    snprintf(path,sizeof(path),"/proc/%ld/root/opt/lisa/master-ctl.so",(long)actor->pid);
+    if(actor->role){struct stat source;if(stat(plugin_image,&source)||stat(path,&actual)||actual.st_dev!=source.st_dev||actual.st_ino!=source.st_ino||actual.st_uid||(actual.st_mode&07777)!=0700)return 0;}
+    else if(!lstat(path,&actual)||errno!=ENOENT)return 0;
+#endif
     snprintf(path,sizeof(path),"/proc/%ld/fd",(long)actor->pid);DIR *list=opendir(path);if(!list)return 0;struct dirent *entry;unsigned count=0;int good=1;
     while((entry=readdir(list))){char *end;long fd=strtol(entry->d_name,&end,10);if(*end||fd<0)continue;++count;
         snprintf(path,sizeof(path),"/proc/%ld/fd/%ld",(long)actor->pid,fd);if(stat(path,&actual)){good=0;break;}
@@ -182,6 +218,9 @@ static int start_actor(const char *base,const char *image,unsigned index,int pee
         if(output<0||store_write_all(output,text,(size_t)n)||fsync(output)||close(output)||rename(temporary,path))_exit(80);
         int zero=open("/dev/null",O_RDWR|O_CLOEXEC);if(zero<0||dup2(zero,0)<0||dup2(zero,1)<0||dup2(reports[1],2)<0)_exit(81);
         int keep[]={0,1,2,peer,control};unsigned count=control>=3?5:4;
+#ifdef MASTER_PLUGIN_LAB
+        plugin_child=role;
+#endif
         if(close_except(keep,count)||isolate(handle->root,image)||clearenv()||identity()||prctl(PR_SET_PDEATHSIG,SIGKILL)||getppid()!=parent)_exit(82);
         struct rlimit cpu={2,3},data={32u*1024*1024,32u*1024*1024},files={64,64},core={0,0};
         if(setrlimit(RLIMIT_CPU,&cpu)||setrlimit(RLIMIT_AS,&data)||setrlimit(RLIMIT_NOFILE,&files)||setrlimit(RLIMIT_CORE,&core))_exit(83);
@@ -210,6 +249,9 @@ static int same_image(pid_t pid,const char *source);
 static int scope_absent(const char *source);
 static int run(const char *base,const char *image){
     int total_good=1;unsigned before_checks=checks,inspection_checks=0;
+#ifdef MASTER_PLUGIN_LAB
+    unsigned plugin_admission_controls=0;
+#endif
 #define INSPECT(c) do{++inspection_checks;if(!(c))return -1;}while(0)
     INSPECT(same_image(getpid(),image)==0);INSPECT(same_image(getppid(),image)==1);INSPECT(scope_absent(image)==0);
     for(unsigned mode=0;mode<8;++mode){unsigned char epoch[MASTER_EPOCH_BYTES];int random=open("/dev/urandom",O_RDONLY|O_CLOEXEC);if(random<0)return -1;
@@ -223,6 +265,10 @@ static int run(const char *base,const char *image){
         if(good){INSPECT(same_image(server.pid,image)==0);INSPECT(scope_absent(image)==1);}
         if(good&&(ptrace(PTRACE_CONT,server.pid,NULL,NULL)||receive_report(&server,&a,1)))good=0;
         if(good&&start_actor(base,image,2*mode+1,peer[1],-1,1,mode,token,0,&client))good=0;
+#ifdef MASTER_PLUGIN_LAB
+        if(good){const char *saved=plugin_image;plugin_image=image;int refused=!private_view(&client,1);plugin_image=saved;
+            if(!refused||!private_view(&client,1))return -1;plugin_admission_controls+=2;}
+#endif
         if(good)INSPECT(same_image(client.pid,image)==0);
         int sources_closed=!close(peer[0]);if(close(peer[1]))sources_closed=0;if(close(control))sources_closed=0;
         for(unsigned i=0;i<3;++i){int fd=i==2?control:peer[i];errno=0;if(fcntl(fd,F_GETFD)>=0||errno!=EBADF)sources_closed=0;}
@@ -240,6 +286,9 @@ static int run(const char *base,const char *image){
     INSPECT(scope_absent(image)==0);
 #undef INSPECT
     int network=socket(AF_INET,SOCK_STREAM|SOCK_CLOEXEC,0);check(network>=0);if(network>=0)close(network);
+#ifdef MASTER_PLUGIN_LAB
+    printf("{\"event\":\"master-plugin-read\",\"clients\":8,\"plugin_admission_controls\":%u,\"library_version\":\"1.2.1.2\",\"metadata_checked\":true,\"backend_death_error\":true,\"sdk_executed\":false,\"audio_opened\":false,\"ok\":%s}\n",plugin_admission_controls,total_good&&!failures?"true":"false");fflush(stdout);
+#endif
     printf("{\"selftest\":\"master-read-broker\",\"checks\":%u,\"inspection_checks\":%u,\"failures\":%u,\"ok\":%s,\"own_client_only\":true,\"unrelated_socket_creation\":%s,\"audio_opened\":false,\"production_changed\":false}\n",checks-before_checks,inspection_checks,failures,total_good&&!failures?"true":"false",network>=0?"true":"false");fflush(stdout);
     return total_good&&!failures?0:-1;
 }
@@ -247,7 +296,7 @@ static int run(const char *base,const char *image){
  * admission. The shell combines same-image with the committed PID/start tick.
  * Compare inodes because an exec through a bind mount has a different path. */
 static int inspection_source(const char *path,struct stat *info){
-    const char prefix[]="/bkupgrade/data/opt/lisa-controller-lab/master-read-probe-";
+    const char prefix[]=MASTER_LAB_IMAGE;
     if(getuid()||geteuid()||strncmp(path,prefix,sizeof(prefix)-1)||strlen(path)!=sizeof(prefix)-1+16)return -1;
     for(size_t i=sizeof(prefix)-1;path[i];++i)if(!((path[i]>='0'&&path[i]<='9')||(path[i]>='a'&&path[i]<='f')))return -1;
     int fd=open(path,O_RDONLY|O_NOFOLLOW|O_CLOEXEC);if(fd<0)return -1;
@@ -281,8 +330,16 @@ int main(int argc,char **argv){
             (values[3]?(values[1]!=-1||control_id):(values[1]<3||!control_id))||epoch_decode(argv[7],epoch))return 2;
         return actor((int)values[0],(int)values[1],(pid_t)values[2],(unsigned)values[3],(unsigned)values[4],epoch,(unsigned)control_id);
     }
+#ifdef MASTER_PLUGIN_LAB
+    if(argc!=4||strcmp(argv[1],"--run")||getuid()||geteuid()||getgid()||getegid())return 2;
+    const char module_prefix[]="/bkupgrade/data/opt/lisa-controller-lab/master-ctl-plugin-";
+    plugin_image=argv[3];if(strncmp(plugin_image,module_prefix,sizeof(module_prefix)-1)||strlen(plugin_image)!=sizeof(module_prefix)-1+16)return 2;
+    for(size_t i=sizeof(module_prefix)-1;plugin_image[i];++i)if(!((plugin_image[i]>='0'&&plugin_image[i]<='9')||(plugin_image[i]>='a'&&plugin_image[i]<='f')))return 2;
+    struct stat module;if(lstat(plugin_image,&module)||!S_ISREG(module.st_mode)||module.st_uid||module.st_nlink!=1||(module.st_mode&07777)!=0700)return 2;
+#else
     if(argc!=3||strcmp(argv[1],"--run")||getuid()||geteuid()||getgid()||getegid())return 2;
-    const char *base=argv[2],prefix[]="/bkupgrade/data/opt/lisa-controller-lab/master-read.";size_t length=strlen(base);
+#endif
+    const char *base=argv[2],prefix[]=MASTER_LAB_NONCE;size_t length=strlen(base);
     if(strncmp(base,prefix,sizeof(prefix)-1)||length<sizeof(prefix)+5||length>sizeof(prefix)+15)return 2;
     for(size_t i=sizeof(prefix)-1;i<length;++i)if(!((base[i]>='0'&&base[i]<='9')||(base[i]>='A'&&base[i]<='Z')||(base[i]>='a'&&base[i]<='z')))return 2;
     struct stat info;if(lstat(base,&info)||!S_ISDIR(info.st_mode)||info.st_uid||(info.st_mode&07777)!=0700)return 2;

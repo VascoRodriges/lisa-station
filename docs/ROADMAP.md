@@ -332,3 +332,9 @@ read-only logical Master through the bounded GET transport. Host ABI tests use
 the real hash-pinned public ALSA library and an explicitly synthetic packet
 provider. Real speaker/plugin composition and third SDK-capability admission
 are still required before this can supply the SDK's mixer dependency.
+
+The separate [firmware ALSA/plugin composition](MASTER_PLUGIN_READ.md) now
+qualifies eight actual Master-read epochs through own clients, including
+module-inode admission controls and a truthful ALSA error after backend death.
+The normal ALSA configuration loader, third SDK capability, permanent service
+and full production/voice integration remain pending.

@@ -47,6 +47,10 @@ def main():
             del environment[key]
     environment["LD_LIBRARY_PATH"] = str(library)
     subprocess.run([str(probe), str(plugin)], env=environment, check=True, timeout=40)
+    runtime_probe = work / "master-runtime-probe"
+    subprocess.run(common + [str(root / "controller/master_runtime_probe.c"), str(root / "controller/master_plugin_actor.c"),
+                            "-ldl", "-o", str(runtime_probe)], check=True)
+    subprocess.run([str(runtime_probe), str(plugin)], env=environment, check=True, timeout=30)
 
 
 if __name__ == "__main__":
