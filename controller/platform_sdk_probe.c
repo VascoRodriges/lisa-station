@@ -228,7 +228,7 @@ static int execute(const char *base,int rootdir,unsigned index,const char *seeds
     const char *path_name=index==0?"own-paths.private.txt":index==1?"platform-paths.private.txt":"media-paths.private.txt";
     int path_log=openat(rootdir,path_name,O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);
     if(path_log<0){kill(child,SIGKILL);ptrace(PTRACE_CONT,child,NULL,(void *)(intptr_t)SIGKILL);waitpid(child,NULL,__WALL);return -1;}
-    int retained=-1;struct observed result={0};int traced=sdk_trace_worker(child,index?"/system/vendor/quasar/maind":own,&retained,&result,path_log,sdk_original_view,NULL,0,NULL);
+    int retained=-1;struct observed result={0};int traced=sdk_trace_worker(child,index?"/system/vendor/quasar/maind":own,&retained,&result,path_log,sdk_original_view,NULL,0,NULL,NULL);
     if(close(path_log))good=0;
     unsigned objects=0;const char *paths[]={"soundLogStorageDir","soundLogStorage.dat","data/local_events.lmdb","data/capability_states.lmdb","session_storage.dat","own-composition-proof"};
     for(unsigned i=0;i<sizeof(paths)/sizeof(paths[0]);++i){struct stat object;

@@ -19,7 +19,7 @@ def evidence():
                 bounded=True,
             )
             client = dict(
-                event="private-bus-client", epoch=i, actor_checks=26, failures=0, client_binding=True
+                event="private-bus-client", epoch=i, actor_checks=27, failures=0, client_binding=True
             )
             rows.extend([relay, client] if i == 1 else [client, relay])
         rows.append(

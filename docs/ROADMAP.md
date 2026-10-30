@@ -249,6 +249,8 @@ service compatibility, service schemas and the full permanent switching/voice/HA
 roadmap remain open.
 
 A [bounded match-rule metadata decoder](PRIVATE_MATCH_SNAPSHOT.md) now qualifies
-the private daemon's Stats reply format with synthetic fixtures. It does not yet
-call that API or capture SDK subscriptions. Parent-observer admission, live own
-controls, private evidence storage and teardown must be qualified next.
+the private daemon's Stats reply format with synthetic fixtures. A
+[live parent observer](PRIVATE_MATCH_OBSERVER.md) now composes that decoder with
+private API queries after scalar SDK readv events. It verifies an own known rule,
+captures the first SDK subscription privately and proves SDK state removal and
+observer closure. The subscription quota and unfinished production scope remain.

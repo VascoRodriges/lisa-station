@@ -75,7 +75,8 @@ static pid_t sdk_trace_wait(struct task *tasks,unsigned count,int *status,int fa
     return 0;
 }
 static int sdk_trace_worker(pid_t child,const char *expected,int *retained,struct observed *result,int paths,
-    int (*view)(pid_t,struct stat *,void *),void *context,int family_only,int (*binding)(pid_t,void *)){
+    int (*view)(pid_t,struct stat *,void *),void *context,int family_only,int (*binding)(pid_t,void *),
+    int (*received)(pid_t,unsigned,int32_t,void *)){
     unsigned path_bytes=0;struct task tasks[80]={{.tid=child,.active=1,.entering=1}};unsigned count=1,live=1,stops=0;
     uint64_t deadline=now_ms()+6000;int killing=0,failed=0,leader_owned=1;
     #define TRACE_FAIL() do{if(!failed)fprintf(stderr,"sdk trace stage %d errno %d\n",__LINE__,errno);failed=1;}while(0)
@@ -144,6 +145,10 @@ static int sdk_trace_worker(pid_t child,const char *expected,int *retained,struc
                     if(used<=0||used>=(int)sizeof(row)||store_write_all(paths,row,(size_t)used))TRACE_FAIL();
                     else path_bytes+=(unsigned)used;}
             }
+            /* Scalar FD/result metadata only. The optional observer may query
+             * its private bus API; it never sees the SDK's I/O buffers. */
+            if(!failed&&result->verified&&!tasks[slot].entering&&returned>0&&tasks[slot].pending==SYS_readv&&received&&
+                received(child,tasks[slot].first,returned,context)<0)TRACE_FAIL();
             tasks[slot].entering=!tasks[slot].entering;
         }else if(signal!=SIGSTOP){deliver=signal;}
         if(failed&&!killing){if(leader_owned)kill(child,SIGKILL);killing=1;deadline=now_ms()+3000;}

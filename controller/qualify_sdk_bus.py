@@ -44,9 +44,9 @@ def diagnostic_script():
 
 def evaluate_events(events):
     """Require SDK boundary, real EXTERNAL authentication and complete teardown."""
-    if type(events) is not list or len(events) != 9 or any(type(e) is not dict for e in events):
+    if type(events) is not list or len(events) != 11 or any(type(e) is not dict for e in events):
         return False
-    for i, role in [(0, "own-elf"), (2, "platform")]:
+    for i, role in [(0, "own-elf"), (3, "platform")]:
         event = events[i]
         required = dict(
             event="sdk-bus-diagnostic", role=role, boundary_ok=True,
@@ -89,8 +89,16 @@ def evaluate_events(events):
             return False
         if role == "own-elf" and (relay["result"] != 0 or relay["origin"] != 0 or not relay["protocol_traffic"]):
             return False
+        observer = events[i + 2]
+        required = dict(event="sdk-match-observer", role=role, snapshot_captured=True,
+                        own_fixture_match=role == "own-elf", sdk_subscription_removed=True,
+                        observer_closed=True, private_metadata_only=True)
+        if (set(observer) != set(required) | {"queries"}
+            or any(type(observer.get(k)) is not type(v) or observer[k] != v for k, v in required.items())
+            or type(observer.get("queries")) is not int or not 1 <= observer["queries"] <= 40):
+            return False
     wanted = [
-        dict(event="sdk-subscription-policy", checks=22, failures=0, driver_signal_received=True,
+        dict(event="sdk-subscription-policy", checks=23, failures=0, driver_signal_received=True,
              peer_signal_blocked=True, rule_limit=1, connections_closed=True, own_controls_only=True),
         dict(selftest="sdk-private-bus", ok=True, sdk_executed=True, audio_opened=False, functionality_verified=False),
         dict(event="private-bus-parent", checks=5, failures=0, unrelated_internet_controls=True),
@@ -98,7 +106,7 @@ def evaluate_events(events):
     ]
     return all(
         row == target and all(type(row.get(k)) is type(v) for k, v in target.items())
-        for row, target in zip(events[4:], wanted, strict=True)
+        for row, target in zip(events[6:], wanted, strict=True)
     )
 
 
@@ -152,7 +160,7 @@ def main():
     if isinstance(state, str) and state.startswith(prefix) and 6 <= len(state[len(prefix):]) <= 16 and state[len(prefix):].isascii() and state[len(prefix):].isalnum():
         (root / "build/sdk-bus-state.private.txt").write_text(state + "\n", encoding="utf-8")
         for role in range(2):
-            for suffix in ["stderr", "paths", "bus-stderr"]:
+            for suffix in ["stderr", "paths", "bus-stderr", "match"]:
                 name = f"sdk{role}-{suffix}.private.txt"
                 saved = remote("test ! -L " + state + "/" + name + " && head -c 65536 " + state + "/" + name)
                 if saved.returncode == 0:

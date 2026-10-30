@@ -26,9 +26,9 @@ malformed Unicode, duplicate/invalid keys, oversize/extra rules, mutated lengths
 padding and trailing data. The same fixture compiles for the ARM ABI; no device
 test or unchanged SDK diagnostic was repeated for this pure component.
 
-Ruff/public-source checks and 1488 Python/HA tests pass. CI runs the host fixture;
-the existing 45-target ARM build matrix is unchanged. Actual SDK match-rule
-capture remains unfinished. The next step is a bounded parent observer with an
-own positive control, private evidence storage and verified descriptor/state
-teardown. It must use the private daemon's metadata API without inspecting SDK
-read/write, authentication or audio buffers.
+Ruff/public-source checks and 1505 Python/HA tests pass. CI runs the host fixture;
+the existing 45-target ARM build matrix is unchanged. The subsequent
+[parent observer](PRIVATE_MATCH_OBSERVER.md) now captures the actual first SDK
+rule through the private daemon API, after a known own positive control, and
+verifies descriptor and subscription-state teardown. SDK read/write,
+authentication and audio buffers remain uninspected.

@@ -66,19 +66,19 @@ An authentication evidence bit is set only after real backend OK and client BEGI
 all failed or rejected fixture cases leave it unset. The bit carries no identity
 or protocol payload and does not establish service authorization.
 
-The updated [sibling composition](PRIVATE_CLIENT_BINDING.md) passed **146 device
+The updated [sibling composition](PRIVATE_CLIENT_BINDING.md) passed **148 device
 checks**: 15 controls, 52 coordinator checks, five outer controls, 11 per relay
-and 26 per own client across two epochs. Actual method traffic and both EOF
+and 27 per own client across two epochs. Actual method traffic and both EOF
 origins pass through separate clients/relays, with all actors reaped and fresh
 storage/bus epochs. This remains own-client evidence, not SDK batch materialization
 or a new parent-death crash test.
 
 Stock identities/configuration/firewall/rootfs and unrelated root network controls
-are preserved. Ruff/public-source validation and **1479 Python/HA tests** pass.
+are preserved. Ruff/public-source validation and **1505 Python/HA tests** pass.
 CI builds 45 native targets and repeats the host relay fixture. Qualified sibling
 probe SHA256:
 
-`b7a3a80f5aa78cbc883e9c83209181d834367c9fb8802b20266e55edc3cce3fa`
+`caf2ea1cfb12a4317c7090cab83d11e94c43f9e1911d38cebafb76d9e3b3cded`
 
 The server binding is unchanged. Complete SDK service compatibility, peer/holder
 lifetime completion, required service schemas, identity/hardware/time compatibility

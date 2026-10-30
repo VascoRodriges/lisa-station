@@ -117,14 +117,18 @@ actual SDK, permanent modes/boot/voice and HA migration remain unfinished.
 The [audio-free SDK admission diagnostic](docs/SDK_PRIVATE_BUS_DIAGNOSTIC.md)
 now verifies the actual platform executable and loaded client binding, private
 storage/FD boundaries and complete thread teardown beside the bus and relay.
-The SDK still fails before bus authentication. A reviewed logical client-label
-bind now works without a kernel bind, and [per-thread MSG_NOSIGNAL
+A reviewed logical client-label bind now works without a kernel bind, and [per-thread MSG_NOSIGNAL
 compatibility](docs/BYTE_SIGNAL_COMPATIBILITY.md) preserves the SDK's handler.
 The SDK now authenticates through the private gate. A [bounded subscription lab
 profile](docs/PRIVATE_BUS_SUBSCRIPTIONS.md) permits its first AddMatch while
 retaining driver-only reception and a one-rule quota. The next registration hits
 that quota. Usable Alice mode, service compatibility and permanent switching
 remain unfinished.
+
+The [live private metadata observer](docs/PRIVATE_MATCH_OBSERVER.md) now captures
+the SDK's first subscription through the private daemon API, after an independent
+own positive control. It verifies subscription removal and observer closure;
+actual rule evidence stays private and the quota remains unchanged.
 
 ## Development
 

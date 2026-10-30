@@ -102,13 +102,19 @@ this evidence and bidirectional traffic for both clients; boundary checks alone
 cannot pass the authentication milestone. Host relay controls check that rejected
 and failed authentication attempts never acquire this flag.
 
+The [private metadata observer](PRIVATE_MATCH_OBSERVER.md) now samples the first
+registered rule through the admitted daemon API after scalar readv events. The
+own-rule positive control, removal of SDK state after teardown and closure of
+the separate parent descriptor are mandatory evidence. SDK I/O, authentication
+and audio buffers are never inspected. The quota remains one.
+
 The completed trials preserved stock process/configuration identities, boot identity and
 firewall rules. All owned actors were reaped and private mount underlays released.
 The control also exercised disappearing register sets during group exit without
 losing the SDK-family drain or reaping its siblings.
 
 Qualified probe SHA256:
-`cdd6d0f33bce82030d2967d8ba5439f0d0306de1f9f75b58b2367cb5ff77fcfd`.
+`caf2ea1cfb12a4317c7090cab83d11e94c43f9e1911d38cebafb76d9e3b3cded`.
 Client binding:
 `29e08ce7dde7430d21ffe33e2e7b223bb47ceab300b6956577c723177e6d2b07`.
 The server library is unchanged. Seven factory cases pass 122 native checks on
@@ -116,7 +122,8 @@ the speaker and fortified host, including signal masks, pending signals, handler
 preservation, logical-bind rejection and ordering.
 The auth state machine passes 62917 host checks and the socket relay 94 checks,
 also under sanitizers. The [subscription profile](PRIVATE_BUS_SUBSCRIPTIONS.md)
-adds 22 device policy controls. Ruff and 1488 Python/HA tests pass; the matrix remains at
+now has 23 policy/lifecycle controls plus live observer proofs. Ruff and 1505
+Python/HA tests pass; the matrix remains at
 45 native targets.
 
 Next work is to review the SDK's subscription and service requirements, retaining

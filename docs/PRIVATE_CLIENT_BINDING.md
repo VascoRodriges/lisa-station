@@ -53,8 +53,10 @@ the actual host-bus pathname stays absent.
 
 ## Evidence and remaining work
 
-The composed speaker trial passed **146 checks**: 15 controls, 52 coordinator
-checks, five outer controls, 11 per relay and 26 per own client across two epochs.
+The composed speaker trial passed **148 checks**: 15 controls, 52 coordinator
+checks, five outer controls, 11 per relay and 27 per own client across two epochs.
+The additional client check denies the Stats snapshot method through its proper
+interface in the default profile.
 The separate own clients receive the real daemon OK, local no-FD ERROR and actual
 method replies through the relay. Forbidden methods still fail. Backend EOF in
 one epoch and explicit client closure in the other close all owned endpoints;
@@ -63,13 +65,13 @@ clients/relays/daemons are reaped and private roots released before the next epo
 Default storage also passed **192 checks plus 50 seed checks**, including absence
 of the optional binding paths. Stock identities, configuration, firewall and
 read-only rootfs are preserved, with unrelated root network controls working.
-Ruff, public-source validation and **1398 Python/HA tests** pass; the matrix remains
+Ruff, public-source validation and **1505 Python/HA tests** pass; the matrix remains
 at 45 native targets. No actual SDK, account, microphone or host-bus forwarding is
 involved in these fixtures.
 
 Qualified ARM probe SHA256 values:
 
-- Sibling composition: `8ef15300b2e0ed93bd50c4ad046f3fde472035cb4af5bf49f65bcf83defe7193`
+- Sibling composition: `caf2ea1cfb12a4317c7090cab83d11e94c43f9e1911d38cebafb76d9e3b3cded`
 - Default storage: `e8ef5f9b3c1a47f4b6d07166a1e0a22e62dde500b2b24a8378d78b250939d0e8`
 
 The existing client/server library artifacts are unchanged. This qualifies own
