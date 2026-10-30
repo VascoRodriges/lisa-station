@@ -48,12 +48,13 @@ administration rights. The existing byte-channel parent validator is unchanged.
 Cached SO_PEERCRED reports the creator, not the current reader after inheritance.
 The coordinator's independent executable, view and FD-object admission therefore
 matters. The [three-sibling composition](PRIVATE_CLIENT_BINDING.md) now also qualifies
-a separate own client with its immutable binding. Actual SDK composition remains
-to be qualified; cached credentials alone do not prove all current holders.
+a separate own client with its immutable binding. The subsequent
+[audio-free SDK diagnostic](SDK_PRIVATE_BUS_DIAGNOSTIC.md) also qualifies actual
+platform authentication; cached credentials alone do not prove all current holders.
 
 ## Evidence and remaining work
 
-The fortified host fixture passed **85 checks across nine cases**. It verifies
+The fortified host fixture passed **94 checks across nine cases**. It verifies
 pipelined authentication/binary tail, 256 KiB of independently checked data in
 each direction, and paused receivers that cause real short writes, EAGAIN and
 backpressure without exceeding storage bounds. Other cases cover authentication
@@ -61,6 +62,9 @@ timeout, malformed authentication, blocking descriptors, object aliases, pipe/
 datagram rejection, missing SIGPIPE preparation and wrong expected parent. Rejected
 objects remain open for caller cleanup. ASan/UBSan also passed the fixture. These
 host workers have syscall guards; they are not filesystem-isolation evidence.
+An authentication evidence bit is set only after real backend OK and client BEGIN;
+all failed or rejected fixture cases leave it unset. The bit carries no identity
+or protocol payload and does not establish service authorization.
 
 The updated [sibling composition](PRIVATE_CLIENT_BINDING.md) passed **146 device
 checks**: 15 controls, 52 coordinator checks, five outer controls, 11 per relay
@@ -70,13 +74,13 @@ storage/bus epochs. This remains own-client evidence, not SDK batch materializat
 or a new parent-death crash test.
 
 Stock identities/configuration/firewall/rootfs and unrelated root network controls
-are preserved. Ruff/public-source validation and **1398 Python/HA tests** pass.
+are preserved. Ruff/public-source validation and **1479 Python/HA tests** pass.
 CI builds 45 native targets and repeats the host relay fixture. Qualified sibling
 probe SHA256:
 
-`8ef15300b2e0ed93bd50c4ad046f3fde472035cb4af5bf49f65bcf83defe7193`
+`b7a3a80f5aa78cbc883e9c83209181d834367c9fb8802b20266e55edc3cce3fa`
 
-The server binding is unchanged. Actual SDK immutable client binding, peer/holder
+The server binding is unchanged. Complete SDK service compatibility, peer/holder
 lifetime completion, required service schemas, identity/hardware/time compatibility
 and production mode/boot/voice integration remain unfinished. This diagnostic
 installs no permanent service and never restores or restarts ordinary Alice.

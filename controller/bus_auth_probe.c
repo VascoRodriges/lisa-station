@@ -87,10 +87,43 @@ static void challenge(void){
     check(bus_auth_feed(&gate,BUS_CLIENT,"BEGIN\r\n",7,8)==BUS_OK&&gate.phase==BUS_BINARY&&!gate.negotiated);
     check(bus_auth_close(&gate)==BUS_BAD&&zeroed(&gate));
 }
+static void implicit_challenge(size_t client_split,size_t server_split){
+    struct bus_auth_gate gate;bus_auth_init(&gate,100);
+    static const char request[]="\0AUTH EXTERNAL\r\nDATA\r\nNEGOTIATE_UNIX_FD\r\nBEGIN\r\n\1\0\2\xff";
+    static const char first[]="\0AUTH EXTERNAL\r\n",data[]="DATA\r\n",tail[]="BEGIN\r\n\1\0\2\xff";
+    check(bus_auth_feed(&gate,BUS_CLIENT,request,client_split,101)==BUS_OK);
+    check(bus_auth_feed(&gate,BUS_CLIENT,request+client_split,sizeof(request)-1-client_split,102)==BUS_OK);
+    check(gate.phase==BUS_WAIT_AUTH&&gate.implicit_identity&&gate.outgoing[BUS_BACKEND]==sizeof(first)-1&&!memcmp(gate.output[BUS_BACKEND],first,sizeof(first)-1));
+    check(bus_auth_consume(&gate,BUS_BACKEND,sizeof(first)-1)==BUS_OK);
+    for(size_t i=0;i<sizeof(data)-1;++i)check(bus_auth_feed(&gate,BUS_BACKEND,data+i,1,103+i)==BUS_OK);
+    check(gate.phase==BUS_WAIT_DATA&&gate.outgoing[BUS_BACKEND]==sizeof(data)-1&&!memcmp(gate.output[BUS_BACKEND],data,sizeof(data)-1));
+    check(gate.outgoing[BUS_CLIENT]==sizeof(data)-1&&!memcmp(gate.output[BUS_CLIENT],data,sizeof(data)-1));
+    check(bus_auth_consume(&gate,BUS_BACKEND,sizeof(data)-1)==BUS_OK);
+    check(bus_auth_feed(&gate,BUS_BACKEND,reply,server_split,110)==BUS_OK);
+    check(bus_auth_feed(&gate,BUS_BACKEND,reply+server_split,sizeof(reply)-1-server_split,111)==BUS_OK);
+    check(gate.phase==BUS_BINARY&&gate.negotiated&&gate.outgoing[BUS_BACKEND]==sizeof(tail)-1&&!memcmp(gate.output[BUS_BACKEND],tail,sizeof(tail)-1));
+    check(gate.outgoing[BUS_CLIENT]==sizeof(data)+sizeof(reply)+sizeof(denied)-3&&
+        !memcmp(gate.output[BUS_CLIENT],data,sizeof(data)-1)&&!memcmp(gate.output[BUS_CLIENT]+sizeof(data)-1,reply,sizeof(reply)-1)&&
+        !memcmp(gate.output[BUS_CLIENT]+sizeof(data)+sizeof(reply)-2,denied,sizeof(denied)-1));
+    check(bus_auth_close(&gate)==BUS_BAD&&zeroed(&gate));
+}
+static void implicit_negative(void){
+    struct bus_auth_gate gate;bus_auth_init(&gate,100);
+    check(bus_auth_feed(&gate,BUS_CLIENT,"\0AUTH EXTERNAL 30\r\n",19,101)==BUS_OK);
+    check(bus_auth_feed(&gate,BUS_BACKEND,"DATA\r\n",6,102)==BUS_OK);
+    check(bus_auth_feed(&gate,BUS_CLIENT,"DATA\r\n",6,103)==BUS_BAD&&zeroed(&gate));
+    bus_auth_init(&gate,100);check(bus_auth_feed(&gate,BUS_CLIENT,"\0AUTH EXTERNAL\r\nDATA \r\n",23,101)==BUS_OK);
+    check(bus_auth_feed(&gate,BUS_BACKEND,"DATA\r\n",6,102)==BUS_BAD&&zeroed(&gate));
+    bus_auth_init(&gate,100);check(bus_auth_feed(&gate,BUS_CLIENT,"\0AUTH EXTERNAL\r\nDATA\r\n",22,101)==BUS_OK);
+    check(bus_auth_feed(&gate,BUS_BACKEND,"DATA\r\n",6,102)==BUS_OK);
+    check(bus_auth_feed(&gate,BUS_BACKEND,"DATA\r\n",6,103)==BUS_BAD&&zeroed(&gate));
+}
 int main(int argc,char **argv){
     if(argc!=2||strcmp(argv[1],"--selftest"))return 2;
     for(size_t i=0;i<sizeof(hello);++i)for(size_t j=0;j<sizeof(reply);++j)pipeline(i,j);
-    negative();limits();challenge();
+    static const char implicit[]="\0AUTH EXTERNAL\r\nDATA\r\nNEGOTIATE_UNIX_FD\r\nBEGIN\r\n\1\0\2\xff";
+    for(size_t i=0;i<sizeof(implicit);++i)for(size_t j=0;j<sizeof(reply);++j)implicit_challenge(i,j);
+    negative();limits();challenge();implicit_negative();
     printf("{\"selftest\":\"bus-auth-gate\",\"checks\":%u,\"failures\":%u,\"ok\":%s,\"synthetic_only\":true}\n",checks,failures,failures?"false":"true");
     return failures?2:0;
 }

@@ -180,6 +180,13 @@ static int relay_auth(int fd,char guid[33]){
     memcpy(guid,response+3,32);guid[32]=0;
     return line(fd,response,sizeof(response))||strcmp(response,"ERROR Unix FD passing disabled")?-1:0;
 }
+static int relay_auth_implicit(int fd,char guid[33]){
+    static const char request[]="\0AUTH EXTERNAL\r\nDATA\r\nNEGOTIATE_UNIX_FD\r\nBEGIN\r\n";char response[128];
+    if(store_write_all(fd,request,sizeof(request)-1)||line(fd,response,sizeof(response))||strcmp(response,"DATA")||
+        line(fd,response,sizeof(response))||!bus_auth_ok_line(response))return -1;
+    memcpy(guid,response+3,32);guid[32]=0;
+    return line(fd,response,sizeof(response))||strcmp(response,"ERROR Unix FD passing disabled")?-1:0;
+}
 static uint32_t u32(const unsigned char *p){return (uint32_t)p[0]|(uint32_t)p[1]<<8|(uint32_t)p[2]<<16|(uint32_t)p[3]<<24;}
 static void put32(unsigned char *p,uint32_t value){for(unsigned i=0;i<4;++i)p[i]=(unsigned char)(value>>(8*i));}
 static size_t string_field(unsigned char *frame,size_t used,unsigned code,char type,const char *value){
@@ -311,7 +318,7 @@ static int sdk_bus_control(int source,pid_t parent){
     int fd=socket(AF_UNIX,SOCK_STREAM|SOCK_CLOEXEC,0);char guid[33],body[128];
     struct sockaddr_un label={.sun_family=AF_UNIX};memcpy(label.sun_path+1,"abc/bus/own/control",19);
     if(fd<3||bind(fd,(struct sockaddr *)&label,(socklen_t)(offsetof(struct sockaddr_un,sun_path)+20))||
-        connect(fd,(struct sockaddr *)&address,sizeof(address))||relay_auth(fd,guid)||
+        connect(fd,(struct sockaddr *)&address,sizeof(address))||relay_auth_implicit(fd,guid)||
         method(fd,"Hello",1,0,body,sizeof(body))||method(fd,"GetId",2,0,body,sizeof(body))||close(fd))return 9;
     int marker=open("/data/quasar/own-bus-gate-proof",O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);
     if(marker<0||store_write_all(marker,"no audio\n",9)||close(marker))return 9;
@@ -573,7 +580,7 @@ static void finish_relay(struct relay_handle *handle,unsigned epoch,int origin){
     if(handle->pid<2)return;
     struct relay_report report={0};int received=!full(handle->report,&report,sizeof(report));close(handle->report);handle->report=-1;
     int status=0;pid_t done;do{done=waitpid(handle->pid,&status,0);}while(done<0&&errno==EINTR);
-    check(received&&report.checks==11&&!report.failures&&report.stats.result==RELAY_EOF&&report.stats.origin==origin);
+    check(received&&report.checks==11&&!report.failures&&report.stats.result==RELAY_EOF&&report.stats.origin==origin&&report.stats.authenticated);
     check(done==handle->pid&&WIFEXITED(status)&&!WEXITSTATUS(status));
     check(received&&report.stats.maximum_output<=2*BUS_AUTH_OUTPUT&&report.stats.maximum_pending<=1024&&
         report.stats.read_bytes[0]&&report.stats.read_bytes[1]&&report.stats.written_bytes[0]&&report.stats.written_bytes[1]);
@@ -667,8 +674,8 @@ static int finish_sdk_relay(struct relay_handle *handle,unsigned role){
     int traffic=report.stats.read_bytes[0]>0&&report.stats.read_bytes[1]>0&&report.stats.written_bytes[0]>0&&report.stats.written_bytes[1]>0;
     if(!role&&(!traffic||report.stats.result!=RELAY_EOF||report.stats.origin!=BUS_CLIENT))good=0;
     if(rmdir(handle->root))good=0;handle->pid=-1;
-    printf("{\"event\":\"sdk-bus-relay\",\"role\":\"%s\",\"boundary_ok\":%s,\"actor_checks\":%u,\"result\":%d,\"origin\":%d,\"protocol_traffic\":%s}\n",
-        role?"platform":"own-elf",good?"true":"false",report.checks,report.stats.result,report.stats.origin,traffic?"true":"false");fflush(stdout);return good?0:-1;
+    printf("{\"event\":\"sdk-bus-relay\",\"role\":\"%s\",\"boundary_ok\":%s,\"actor_checks\":%u,\"result\":%d,\"origin\":%d,\"protocol_traffic\":%s,\"auth_verified\":%s}\n",
+        role?"platform":"own-elf",good?"true":"false",report.checks,report.stats.result,report.stats.origin,traffic?"true":"false",report.stats.authenticated?"true":"false");fflush(stdout);return good?0:-1;
 }
 static int sdk_bus_epoch(const char *base,const char *own,const char *server_binding,const char *client_binding,unsigned role){
     char root[PATH_MAX];struct sockaddr_un endpoint={.sun_family=AF_UNIX};int reload[2];

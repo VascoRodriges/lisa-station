@@ -2,8 +2,8 @@
 
 The explicit `--run-sdk` lab mode in `private_bus_probe.c` now admits the actual
 platform SDK beside the private daemon and sealed byte relay. It qualifies the
-storage, descriptor, binding and process boundaries. **The SDK does not yet
-communicate successfully with this bus or implement a usable Alice mode.**
+storage, descriptor, binding and process boundaries. **The SDK now authenticates,
+but binary method policy rejects AddMatch; usable Alice mode remains unfinished.**
 
 This is separate from the default own-client test and from production switching.
 The wrapper refuses installed production state and any concurrent device trial.
@@ -80,14 +80,24 @@ SIGPIPE is ignored. It records no addresses, buffer contents or pointers.
 ## Observed result
 
 The actual device trial passed the own control and both independent process
-boundaries. The platform SDK loaded the pinned binding, created 16 threads and
-then aborted before completing authentication; all threads were drained. The
-logical bind removed the previous bind rejection. Scalar diagnostics then showed
-that a sendmsg with no destination or ancillary data was refused because the SDK
-installs its own SIGPIPE handler. The [per-thread signal wrapper](BYTE_SIGNAL_COMPATIBILITY.md)
-now resolves that contract without changing the process handler or enabling raw
-send syscalls. The SDK reaches the relay, which rejects its authentication
-sequence. SDK authentication and method authorization remain unverified.
+boundaries. Logical bind and the [per-thread signal wrapper](BYTE_SIGNAL_COMPATIBILITY.md)
+resolved the first two compatibility failures. The gate now supports the reviewed
+EXTERNAL form that omits an inline identity and answers the real backend DATA
+challenge with empty DATA. The admitted UID0 kernel peer remains mandatory;
+anonymous and different identities remain forbidden. Only the backend supplies OK.
+
+The own control first completes this challenge, real OK, local FD rejection and
+Hello/GetId through the private daemon. The platform SDK then loads the pinned
+binding, creates 17 threads, authenticates and sends binary method traffic. The
+daemon rejects AddMatch, and the SDK aborts on signal-handler registration. All
+threads and sibling actors are drained. This is protocol compatibility, not a
+usable Alice mode or approved service/subscription schema.
+
+Relay evidence now includes `auth_verified`: it is set only after the gate has
+received a real backend OK and accepted client BEGIN. The SDK evaluator requires
+this evidence and bidirectional traffic for both clients; boundary checks alone
+cannot pass the authentication milestone. Host relay controls check that rejected
+and failed authentication attempts never acquire this flag.
 
 The completed trials preserved stock process/configuration identities, boot identity and
 firewall rules. All owned actors were reaped and private mount underlays released.
@@ -95,16 +105,18 @@ The control also exercised disappearing register sets during group exit without
 losing the SDK-family drain or reaping its siblings.
 
 Qualified probe SHA256:
-`773723bb30d4cbc5555e26a06281287114283fd951765829eca8d094adeba7b4`.
+`b7a3a80f5aa78cbc883e9c83209181d834367c9fb8802b20266e55edc3cce3fa`.
 Client binding:
 `29e08ce7dde7430d21ffe33e2e7b223bb47ceab300b6956577c723177e6d2b07`.
 The server library is unchanged. Seven factory cases pass 122 native checks on
 the speaker and fortified host, including signal masks, pending signals, handler
 preservation, logical-bind rejection and ordering.
-Ruff and 1475 Python/HA tests pass; the matrix remains at 45 native targets.
+The auth state machine passes 62917 host checks and the socket relay 94 checks,
+also under sanitizers. Ruff and 1479 Python/HA tests pass; the matrix remains at
+45 native targets.
 
-Next work is to review the SDK's EXTERNAL authentication variant, retaining real
-backend authentication and independent kernel denial. Narrow service
+Next work is to review the SDK's subscription and service requirements, retaining
+restricted private-bus policy and independent kernel denial. Narrow service
 schemas, normal cloud-Alice network policy, real identity/hardware/time/queue
 lifecycle, permanent supervision/boot/voice and HA migration remain unfinished.
 The strict local diagnostic is not the final cloud-Alice network policy and must

@@ -240,5 +240,7 @@ first. Numeric call-origin metadata distinguished denied libc name-cache sockets
 from the SDK's missing logical bind. The reviewed client-label bind is now
 adapted without a kernel bind. [Per-thread MSG_NOSIGNAL
 compatibility](BYTE_SIGNAL_COMPATIBILITY.md) now preserves the SDK handler and
-pending signals. The SDK reaches the authentication gate; handshake compatibility,
+pending signals. The SDK now completes real EXTERNAL challenge authentication
+through the private gate and reaches binary method policy. Its AddMatch request
+remains denied; service compatibility,
 service schemas and the full permanent switching/voice/HA roadmap remain open.

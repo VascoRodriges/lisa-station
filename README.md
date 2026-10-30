@@ -120,8 +120,9 @@ storage/FD boundaries and complete thread teardown beside the bus and relay.
 The SDK still fails before bus authentication. A reviewed logical client-label
 bind now works without a kernel bind, and [per-thread MSG_NOSIGNAL
 compatibility](docs/BYTE_SIGNAL_COMPATIBILITY.md) preserves the SDK's handler.
-The SDK reaches the authentication gate, whose handshake compatibility remains
-pending. No SDK protocol success or usable Alice mode is claimed.
+The SDK now authenticates through the private gate and reaches binary method
+policy; its AddMatch request remains denied. Usable Alice mode, service
+compatibility and permanent switching remain unfinished.
 
 ## Development
 

@@ -43,7 +43,7 @@ def diagnostic_script():
 
 
 def evaluate_events(events):
-    """Require complete control, SDK boundary, drain and unchanged-root proofs."""
+    """Require SDK boundary, real EXTERNAL authentication and complete teardown."""
     if type(events) is not list or len(events) != 8 or any(type(e) is not dict for e in events):
         return False
     for i, role in [(0, "own-elf"), (2, "platform")]:
@@ -76,7 +76,7 @@ def evaluate_events(events):
         ):
             return False
         relay = events[i + 1]
-        required = dict(event="sdk-bus-relay", role=role, boundary_ok=True, actor_checks=11)
+        required = dict(event="sdk-bus-relay", role=role, boundary_ok=True, actor_checks=11, auth_verified=True, protocol_traffic=True)
         if any(type(relay.get(k)) is not type(v) or relay[k] != v for k, v in required.items()):
             return False
         if (
@@ -85,7 +85,7 @@ def evaluate_events(events):
             or relay["origin"] not in [-1, 0, 1] or type(relay.get("protocol_traffic")) is not bool
         ):
             return False
-        if set(relay) != set(required) | {"result", "origin", "protocol_traffic"}:
+        if set(relay) != set(required) | {"result", "origin"}:
             return False
         if role == "own-elf" and (relay["result"] != 0 or relay["origin"] != 0 or not relay["protocol_traffic"]):
             return False

@@ -97,6 +97,7 @@ static int run_case(unsigned variant){
     int status=0;pid_t done;do{done=waitpid(child,&status,0);}while(done<0&&errno==EINTR);
     check(done==child&&WIFEXITED(status)&&!WEXITSTATUS(status));
     check(result.stats.result==(!variant?RELAY_EOF:variant<3?RELAY_AUTH:RELAY_REJECTED));
+    check(result.stats.authenticated==!variant);
     if(!variant){check(result.stats.origin==BUS_CLIENT&&result.stats.short_writes>0&&result.stats.eagain>0&&result.stats.backpressure>0);
         check(result.stats.maximum_output<=2*BUS_AUTH_OUTPUT&&result.stats.maximum_output>0&&
             result.stats.maximum_pending<=1024&&result.stats.maximum_pending>0);

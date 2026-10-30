@@ -31,9 +31,10 @@ the parent, 66 in the ordinary actor and 12 in the threaded actor. Five malforme
 admission cases still terminate before client code. Ruff and 1475 Python/HA tests
 pass; there are 45 native targets.
 
-The actual audio-free SDK diagnostic now passes its former message-send refusal
-and reaches the authentication gate. The gate still rejects the SDK's handshake,
-so SDK bus authentication and usable Alice functionality remain unverified. All
+The actual audio-free SDK diagnostic passes its former message-send refusal.
+The subsequent [EXTERNAL challenge update](BUS_AUTH_GATE.md)
+now authenticates the SDK, while binary method policy still rejects AddMatch.
+Usable Alice functionality remains unverified. All
 SDK threads and sibling actors are drained; stock processes/configuration,
 firewall and unrelated network controls remain intact. No audio or host bus is
 opened and permanent mode switching is not installed by this component.

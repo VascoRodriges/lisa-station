@@ -16,7 +16,7 @@ enum bus_auth_result { BUS_OK, BUS_BLOCKED, BUS_BAD };
 struct bus_auth_gate {
     enum bus_auth_phase phase;
     uint64_t deadline,last;
-    unsigned discovery,attempt,negotiated,challenge,total;
+    unsigned discovery,attempt,negotiated,challenge,total,implicit_identity;
     size_t incoming[2],outgoing[2];
     unsigned char input[2][BUS_AUTH_INPUT],output[2][BUS_AUTH_OUTPUT];
 };
@@ -111,11 +111,14 @@ static inline enum bus_auth_result bus_auth_pump(struct bus_auth_gate *gate){
             if(bus_auth_emit(gate,BUS_CLIENT,gate->input[direction],wire)!=BUS_OK)return BUS_BLOCKED;
         }else if(gate->phase==BUS_AUTH){
             if(!strcmp(text,"AUTH")&&!gate->discovery&&!gate->attempt){gate->discovery=1;gate->phase=BUS_DISCOVERY;}
-            else if((!strcmp(text,"AUTH EXTERNAL 30")||!strcmp(text,"AUTH EXTERNAL"))&&!gate->attempt){gate->attempt=1;gate->phase=BUS_WAIT_AUTH;}
+            else if((!strcmp(text,"AUTH EXTERNAL 30")||!strcmp(text,"AUTH EXTERNAL"))&&!gate->attempt){
+                gate->attempt=1;gate->implicit_identity=!strcmp(text,"AUTH EXTERNAL");gate->phase=BUS_WAIT_AUTH;}
             else return BUS_BAD;
             if(bus_auth_emit(gate,BUS_BACKEND,gate->input[direction],wire)!=BUS_OK)return BUS_BLOCKED;
         }else if(gate->phase==BUS_DATA){
-            if(strcmp(text,"DATA 30"))return BUS_BAD;
+            /* An omitted EXTERNAL identity uses the admitted UID0 kernel
+             * peer. Still require the real backend's challenge and OK. */
+            if(strcmp(text,"DATA 30")&&(!gate->implicit_identity||strcmp(text,"DATA")))return BUS_BAD;
             gate->phase=BUS_WAIT_DATA;
             if(bus_auth_emit(gate,BUS_BACKEND,gate->input[direction],wire)!=BUS_OK)return BUS_BLOCKED;
         }else if(gate->phase==BUS_BEGIN){

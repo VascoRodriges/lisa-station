@@ -20,7 +20,7 @@ def evidence():
         ))
         rows.append(dict(
             event="sdk-bus-relay", role=role, boundary_ok=True, actor_checks=11,
-            result=0, origin=0, protocol_traffic=role == "own-elf",
+            result=0, origin=0, protocol_traffic=True, auth_verified=True,
         ))
     return rows + [
         dict(selftest="sdk-private-bus", ok=True, sdk_executed=True, audio_opened=False, functionality_verified=False),
@@ -74,6 +74,8 @@ def test_rejects_unsafe_or_malformed_sdk_evidence(index, key, value):
     (1, "protocol_traffic", False), (1, "origin", 1), (1, "result", 4),
     (3, "boundary_ok", False), (3, "actor_checks", 10), (3, "result", 1),
     (3, "result", True), (3, "origin", 2), (3, "protocol_traffic", 0),
+    (3, "auth_verified", False), (3, "auth_verified", 1), (1, "auth_verified", False),
+    (3, "protocol_traffic", False),
     (4, "functionality_verified", True), (4, "audio_opened", True), (4, "sdk_executed", False),
     (5, "unrelated_internet_controls", False), (5, "failures", 1),
     (6, "code", False), (7, "ok", False),

@@ -8,13 +8,19 @@ Endpoint/peer admission and ancillary syscall denial remain independent.
 
 The gate is qualified with a real private daemon through the
 [bounded relay actor](BUS_BYTE_RELAY.md). It is not a permanent service or an SDK
-connection.
+connection by itself.
 
 ## Contract
 
 Input can be split across calls. One AUTH discovery and one EXTERNAL attempt are
 allowed, with the expected UID0 encoding and optional DATA challenge. Other
 mechanisms, identities, unexpected replies and repeated negotiation fail closed.
+For AUTH EXTERNAL without an inline identity, an empty DATA response is also
+accepted after the real backend challenge. It uses the independently admitted
+UID0 kernel peer; it does not enable anonymous authentication or accept another
+identity. Empty DATA after an explicit inline UID is rejected. The
+[reviewed sd-bus client sequence](https://github.com/systemd/systemd/blob/v245/src/libsystemd/sd-bus/bus-socket.c#L592-L626)
+pipelines this challenge form with negotiation and BEGIN.
 A backend OK must contain a valid generated identifier and must precede BEGIN.
 The gate never creates OK itself or forwards NEGOTIATE_UNIX_FD to the backend.
 Pipelined AUTH/negotiation/BEGIN waits for that real reply; binary bytes following
@@ -40,12 +46,15 @@ The backend policy and kernel guards continue to enforce their own restrictions.
 
 ## Evidence
 
-The synthetic native self-test passed **26657 checks** on Windows/Zig and fortified
-Linux/GCC. It tests every two-piece split of the fixture's pipelined client
+The synthetic native self-test passed **62917 checks** on fortified Linux/GCC and
+under AddressSanitizer/UndefinedBehaviorSanitizer. It tests every two-piece split of the fixture's pipelined client
 handshake and real-shaped server reply, split output consumption, embedded binary
 tails, discovery/challenge, malformed replies/identities/commands, deadline and
 clock reversal, overlong input, invalid API arguments and transactional output
-backpressure. It verifies pending storage clearing after failure/close.
+backpressure. It also covers the implicit-identity challenge across client/reply
+splits, a byte-at-a-time backend challenge, binary tails and rejection of repeated
+challenges or mismatched empty responses. It verifies pending storage clearing
+after failure/close.
 
 The updated [private-bus diagnostic](PRIVATE_BUS_DIAGNOSTIC.md) passed **146 speaker
 checks** with two separate sealed relay actors. An own client pipelines a request
@@ -53,9 +62,14 @@ on an actual socket and receives the daemon OK plus local negotiation ERROR.
 Hello/GetId and forbidden-method replies traverse the relay. A raw control
 connection still obtains AGREE_UNIX_FD from the unchanged daemon. Both EOF
 origins are checked, all owned actors reaped and references closed between epochs.
-No SDK, microphone, account or host bus is connected.
+Those explicit-identity controls use no SDK, microphone, account or host bus.
+The separate [SDK diagnostic](SDK_PRIVATE_BUS_DIAGNOSTIC.md) now also authenticates
+the actual SDK with synthetic identity storage through this gate. An own third
+sibling first proves the real challenge/OK, local FD rejection and Hello/GetId.
+The SDK then reaches the daemon's binary method policy and its AddMatch request
+is denied. This is authentication compatibility, not full SDK functionality.
 
-Ruff, public-source validation and **1398 Python/HA tests** pass. CI builds 45
+Ruff, public-source validation and **1479 Python/HA tests** pass. CI builds 45
 native targets and repeats the fortified gate and relay self-tests. The exhaustive
 split-test count above is host evidence; the actual ARM relay uses the same gate.
 
@@ -63,8 +77,8 @@ split-test count above is host evidence; the actual ARM relay uses the same gate
 
 The separate relay actor now supplies bounded poll I/O and descriptor ownership
 for the diagnostic. The [own-client sibling and binding](PRIVATE_CLIENT_BINDING.md) are now qualified;
-actual SDK compatibility, full receiver/holder lifecycle and production
+actual SDK service compatibility, full receiver/holder lifecycle and production
 supervision remain required before product use.
-Actual SDK authentication variants, service schemas, private client binding,
+Actual SDK service schemas, receiver/holder lifecycle,
 identity/hardware/time compatibility and production boot/mode/voice integration
 remain unfinished. This component does not install permanent mode switching.

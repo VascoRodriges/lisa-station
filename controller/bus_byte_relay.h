@@ -11,7 +11,7 @@
 enum bus_relay_result { RELAY_EOF, RELAY_REJECTED, RELAY_AUTH, RELAY_IO, RELAY_DEADLINE };
 struct bus_relay_stats {
     uint64_t read_bytes[2],written_bytes[2];
-    unsigned polls,eagain,short_writes,backpressure;
+    unsigned polls,eagain,short_writes,backpressure,authenticated;
     size_t maximum_output,maximum_pending;
     enum bus_relay_result result;
     int origin,error;
@@ -51,7 +51,7 @@ static inline enum bus_relay_result bus_relay_run(int client,int backend,pid_t p
         for(unsigned i=0;i<2;++i)if(pending_size[i]){
             enum bus_auth_result result=bus_auth_feed(&gate,i,pending[i],pending_size[i],now);
             if(result==BUS_BAD){local.result=RELAY_AUTH;goto done;}
-            if(result==BUS_OK){memset(pending[i],0,pending_size[i]);pending_size[i]=0;}
+            if(result==BUS_OK){if(gate.phase==BUS_BINARY)local.authenticated=1;memset(pending[i],0,pending_size[i]);pending_size[i]=0;}
         }
         size_t output=gate.outgoing[0]+gate.outgoing[1],held=pending_size[0]+pending_size[1];
         if(output>local.maximum_output)local.maximum_output=output;
