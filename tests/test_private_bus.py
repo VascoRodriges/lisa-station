@@ -16,6 +16,7 @@ def evidence():
                 failures=0,
                 actual_daemon=i > 0,
                 fd_negotiation_disabled=False,
+                auth_gate_verified=i > 0,
             )
             for i, count in enumerate([7, 28, 49])
         ],
@@ -65,6 +66,9 @@ def test_requires_complete_ordered_unique_evidence(index):
         (2, "actual_daemon", False),
         (3, "actual_daemon", 1),
         (2, "fd_negotiation_disabled", True),
+        (2, "auth_gate_verified", False),
+        (1, "auth_gate_verified", True),
+        (3, "auth_gate_verified", 1),
         (4, "checks", 49),
         (4, "ok", False),
         (4, "sdk_executed", True),

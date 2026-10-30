@@ -213,3 +213,9 @@ actual daemon in a fresh filesystem through preadmitted listener/reload streams.
 Two epochs authenticate and answer restricted methods without opening the host
 bus. Its FD-negotiation contract is still incompatible with byte-only transport;
 actual SDK service schemas and permanent mode/boot composition remain pending.
+
+The [bounded authentication gate](BUS_AUTH_GATE.md) now rejects FD negotiation for
+an own pipelined client while preserving the real private daemon's OK and
+restricted method replies. Split/limit/deadline/backpressure tests pass. Actual
+relay I/O/ownership and SDK integration remain required; this is a qualified
+state machine, not an installed broker or permanent mode switch.

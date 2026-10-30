@@ -67,10 +67,10 @@ cleanup. This stage does not add a separate crash-injection acceptance result.
 
 Qualified ARM SHA256 values:
 
-- Probe: `01b31eeb8c27e11d5fe9253bb39ae71bbc2d8802063e73c0819cdcc8f59b1ccc`
+- Probe: `1f553ed8f9e52bac9f0a154ad2f3b6535882950b88f59abe0a419508fea09ce5`
 - Binding: `7d330f59f0e62c18230408150b582163603a157810e1bbfb0d7bc126d6f1881b`
 
-Ruff, public-source validation and **1378 Python/HA tests** pass. CI builds 43 native
+Ruff, public-source validation and **1381 Python/HA tests** pass. CI builds 44 native
 targets and compiles the new binding with fortified host GCC. The actual daemon
 trial is device-only; CI neither obtains nor distributes firmware libraries.
 
@@ -79,9 +79,13 @@ trial is device-only; CI neither obtains nor distributes firmware libraries.
 The unmodified daemon still replies AGREE_UNIX_FD to negotiation. The byte adapter
 cannot provide that advertised transport: kernel ancillary calls remain denied
 and readv drops incoming control objects. The diagnostic deliberately reports
-`fd_negotiation_disabled=false`, never full isolation or SDK readiness. A reviewed
-no-FD authentication gateway or an FD-disabled standard transport must close this
-gap before using the bus for the SDK. Small FD-count limits are not evidence of a
+`fd_negotiation_disabled=false` for that raw daemon, never full isolation or SDK
+readiness. The [bounded authentication gate](BUS_AUTH_GATE.md) now supplies a
+verified no-FD path for the own in-memory client: it forwards the real daemon OK,
+answers negotiation locally with ERROR and sends only BEGIN to the daemon. This
+path reports `auth_gate_verified=true`. The separate raw connection still obtains
+AGREE_UNIX_FD as a control. An actual relay actor must compose the gate with socket
+ownership/I/O before SDK use. Small FD-count limits alone are not evidence of a
 byte-only authentication contract.
 
 Immutable client binding placement, actual SDK service authorization, protocol

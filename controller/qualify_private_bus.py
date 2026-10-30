@@ -112,6 +112,7 @@ def evaluate_events(events):
             failures=0,
             actual_daemon=i > 0,
             fd_negotiation_disabled=False,
+            auth_gate_verified=i > 0,
         )
         for i, count in enumerate([7, 28, 49])
     ]

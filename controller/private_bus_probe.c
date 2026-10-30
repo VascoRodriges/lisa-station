@@ -18,6 +18,7 @@
 #include "platform_storage.h"
 #include "platform_worker_guard.h"
 #include "loopback_socket.h"
+#include "bus_auth_gate.h"
 #ifndef __arm__
 #error This namespace diagnostic requires the reviewed ARM device ABI
 #endif
@@ -167,6 +168,28 @@ static int auth(int fd,char guid[33]){
     for(unsigned i=3;i<35;++i)if(!((response[i]>='0'&&response[i]<='9')||(response[i]>='a'&&response[i]<='f')))return -1;
     memcpy(guid,response+3,32);guid[32]=0;return 0;
 }
+static int gated_auth(int fd,char guid[33]){
+    /* An own in-memory client intentionally pipelines negotiation and BEGIN.
+     * Only the real private daemon can supply OK; negotiation never reaches it.
+     * This verifies the state machine, not an installed relay actor. */
+    struct bus_auth_gate gate;uint64_t now=guardian_milliseconds();
+    static const char request[]="\0AUTH EXTERNAL 30\r\nNEGOTIATE_UNIX_FD\r\nBEGIN\r\n";
+    static const char initial[]="\0AUTH EXTERNAL 30\r\n";
+    if(bus_auth_init(&gate,now)!=BUS_OK||bus_auth_feed(&gate,BUS_CLIENT,request,sizeof(request)-1,now)!=BUS_OK||
+        gate.outgoing[BUS_BACKEND]!=sizeof(initial)-1||memcmp(gate.output[BUS_BACKEND],initial,sizeof(initial)-1))return -1;
+    if(store_write_all(fd,(const char *)gate.output[BUS_BACKEND],gate.outgoing[BUS_BACKEND])||
+        bus_auth_consume(&gate,BUS_BACKEND,gate.outgoing[BUS_BACKEND])!=BUS_OK)return -1;
+    char response[128];if(line(fd,response,sizeof(response))||!bus_auth_ok_line(response))return -1;
+    memcpy(guid,response+3,32);guid[32]=0;
+    size_t size=strlen(response);memcpy(response+size,"\r\n",3);
+    if(bus_auth_feed(&gate,BUS_BACKEND,response,size+2,guardian_milliseconds())!=BUS_OK||gate.phase!=BUS_BINARY||!gate.negotiated||
+        gate.outgoing[BUS_BACKEND]!=7||memcmp(gate.output[BUS_BACKEND],"BEGIN\r\n",7))return -1;
+    static const char disabled[]="ERROR Unix FD passing disabled\r\n";
+    if(gate.outgoing[BUS_CLIENT]!=size+2+sizeof(disabled)-1||memcmp(gate.output[BUS_CLIENT],response,size+2)||
+        memcmp(gate.output[BUS_CLIENT]+size+2,disabled,sizeof(disabled)-1))return -1;
+    int result=store_write_all(fd,(const char *)gate.output[BUS_BACKEND],gate.outgoing[BUS_BACKEND]);
+    bus_auth_close(&gate);return result;
+}
 static uint32_t u32(const unsigned char *p){return (uint32_t)p[0]|(uint32_t)p[1]<<8|(uint32_t)p[2]<<16|(uint32_t)p[3]<<24;}
 static void put32(unsigned char *p,uint32_t value){for(unsigned i=0;i<4;++i)p[i]=(unsigned char)(value>>(8*i));}
 static size_t string_field(unsigned char *frame,size_t used,unsigned code,char type,const char *value){
@@ -246,7 +269,7 @@ static int run_epoch(const char *root,const char *executable,const char *binding
         check(ready);check(ready&&private_view(child,listener_fd,reload,0));
         if(ready)client=connect_bus(endpoint);check(client>=0);
         if(client>=0){
-            char body[128]={0};check(!auth(client,guid));check(!text_send(client,"BEGIN\r\n"));
+            char body[128]={0};check(!gated_auth(client,guid));check(strlen(guid)==32);
             check(!method(client,"Hello",1,0,body,sizeof(body))&&!strncmp(body,":1.",3));
             check(!method(client,"GetId",2,0,body,sizeof(body))&&strlen(body)==32);
             check(!method(client,"ListNames",3,1,body,sizeof(body)));
@@ -277,7 +300,7 @@ static int run_epoch(const char *root,const char *executable,const char *binding
             ssize_t count=read(held,bytes,sizeof(bytes));if(!count){eof=1;break;}if(count<0)break;drained+=(unsigned)count;}
         check(eof);close(held);
     }
-    printf("{\"event\":\"private-bus-epoch\",\"epoch\":%u,\"checks\":%u,\"failures\":%u,\"actual_daemon\":%s,\"fd_negotiation_disabled\":false}\n",epoch,checks,failures,epoch?"true":"false");fflush(stdout);
+    printf("{\"event\":\"private-bus-epoch\",\"epoch\":%u,\"checks\":%u,\"failures\":%u,\"actual_daemon\":%s,\"fd_negotiation_disabled\":false,\"auth_gate_verified\":%s}\n",epoch,checks,failures,epoch?"true":"false",epoch?"true":"false");fflush(stdout);
     return failures?-1:0;
 }
 static int coordinator(const char *base,const char *executable,const char *binding){

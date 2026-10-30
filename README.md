@@ -101,8 +101,9 @@ or unrelated applications. UNIX/file/mapping relays remain separate requirements
 
 The [private standard-bus diagnostic](docs/PRIVATE_BUS_DIAGNOSTIC.md) now handles
 restricted own-client methods in two disposable filesystem epochs through
-preadmitted streams. It has not connected the SDK or host bus; the no-FD protocol
-contract and permanent mode switching remain unfinished.
+preadmitted streams. The [no-FD authentication component](docs/BUS_AUTH_GATE.md) is qualified with an
+own client. Actual relay ownership, SDK hookup and permanent mode switching
+remain unfinished.
 
 ## Development
 
