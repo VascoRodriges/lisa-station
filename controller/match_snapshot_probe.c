@@ -13,6 +13,12 @@ static size_t entry(unsigned char *p,size_t n,const char *name,const char *rule)
 }
 static int zero(const struct private_match_snapshot *s){struct private_match_snapshot empty={0};return !memcmp(s,&empty,sizeof(empty));}
 static void bad(const unsigned char *p,size_t size){struct private_match_snapshot out;memset(&out,0xa5,sizeof(out));check(private_match_decode(p,size,&out)<0&&zero(&out));}
+static void bad_limit(const unsigned char *p,size_t size,unsigned limit){struct private_match_snapshot out;memset(&out,0xa5,sizeof(out));check(private_match_decode_limit(p,size,limit,&out)<0&&zero(&out));}
+static size_t set_entry(unsigned char *p,size_t n,const char *name,const char *const *rules,unsigned count){
+    n=align(n,8);n=string(p,n,name);n=align(n,4);size_t length=n;n+=4;size_t start=n;
+    for(unsigned i=0;i<count;++i)n=string(p,n,rules[i]);
+    put(p+length,(uint32_t)(n-start));return n;
+}
 int main(int argc,char **argv){
     if(argc!=2||strcmp(argv[1],"--selftest"))return 2;
     unsigned char bytes[MATCH_BODY+128]={0};struct private_match_snapshot out;
@@ -51,5 +57,39 @@ int main(int argc,char **argv){
     memcpy(bytes,golden,sizeof(golden));put(bytes+20,UINT32_MAX);bad(bytes,sizeof(golden));
     memcpy(bytes,golden,sizeof(golden));bytes[30]=0;bad(bytes,sizeof(golden));
     bad(NULL,8);bad(bytes,MATCH_BODY+1);check(private_match_decode(bytes,8,NULL)<0);
+    /* Independent two-rule image: empty rule and "x", each one array element. */
+    const unsigned char pair[]={30,0,0,0,0,0,0,0,4,0,0,0,':','1','.','0',0,0,0,0,14,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,'x',0};
+    memcpy(bytes,pair,sizeof(pair));
+    check(!private_match_decode_limit(bytes,sizeof(pair),2,&out)&&out.rules==2&&out.entry[0].rules==2&&
+        !strcmp(private_match_rule(&out.entry[0],0),"")&&!strcmp(private_match_rule(&out.entry[0],1),"x"));
+    bad(bytes,sizeof(pair));bad_limit(bytes,sizeof(pair),1);
+    check(!private_match_rule(NULL,0)&&!private_match_rule(&out.entry[0],2)&&!private_match_rule(&out.entry[0],UINT32_MAX));
+    bad_limit(bytes,sizeof(pair),0);bad_limit(bytes,sizeof(pair),5);bad_limit(bytes,sizeof(pair),UINT32_MAX);
+    check(private_match_decode_limit(bytes,sizeof(pair),2,NULL)<0);
+    const char *rules[]={"type='signal'","type='signal',interface='org.example.LisaObserver'","","type='signal',arg0='Привет'","fifth"};
+    for(unsigned count=1;count<=5;++count){
+        memset(bytes,0,sizeof(bytes));n=set_entry(bytes,8,":1.0",rules,count);put(bytes,(uint32_t)(n-8));
+        for(unsigned limit=1;limit<=MATCH_RULES;++limit){
+            if(count>limit)bad_limit(bytes,n,limit);
+            else{check(!private_match_decode_limit(bytes,n,limit,&out)&&out.clients==1&&out.rules==count&&out.entry[0].rules==count);
+                for(unsigned i=0;i<count;++i)check(!strcmp(private_match_rule(&out.entry[0],i),rules[i]));
+                for(size_t cut=0;cut<n;++cut)bad_limit(bytes,cut,limit);
+            }
+        }
+    }
+    memset(bytes,0,sizeof(bytes));n=8;
+    for(unsigned i=0;i<MATCH_CLIENTS;++i){char name[16];snprintf(name,sizeof(name),":1.%u",i);n=set_entry(bytes,n,name,rules,4);}
+    put(bytes,(uint32_t)(n-8));check(!private_match_decode_limit(bytes,n,4,&out)&&out.clients==4&&out.rules==16);
+    /* Every malformed UTF-8 sequence must reject even in a later element. */
+    for(unsigned i=0;i<sizeof(invalid)/sizeof(invalid[0]);++i){const char *later[]={"valid",(const char *)invalid[i]};
+        memset(bytes,0,sizeof(bytes));n=set_entry(bytes,8,":1.0",later,2);put(bytes,(uint32_t)(n-8));bad_limit(bytes,n,4);}
+    const char *oversized[]={"valid",long_rule};long_rule[MATCH_RULE]='x';
+    memset(bytes,0,sizeof(bytes));n=set_entry(bytes,8,":1.0",oversized,2);put(bytes,(uint32_t)(n-8));bad_limit(bytes,n,4);
+    /* Full four-element frames exercise later lengths, padding and termination. */
+    memset(bytes,0,sizeof(bytes));n=set_entry(bytes,8,":1.0",rules,4);put(bytes,(uint32_t)(n-8));
+    unsigned char mutated[MATCH_BODY+128];
+    for(size_t where=0;where<n;++where){memcpy(mutated,bytes,n);mutated[where]^=0xff;
+        int result=private_match_decode_limit(mutated,n,4,&out);
+        check(result?zero(&out):(out.clients==1&&out.rules<=4&&out.entry[0].rules<=4));}
     printf("{\"selftest\":\"private-match-snapshot\",\"checks\":%u,\"failures\":%u,\"ok\":%s,\"synthetic_only\":true}\n",checks,failures,failures?"false":"true");return failures?2:0;
 }

@@ -120,15 +120,15 @@ storage/FD boundaries and complete thread teardown beside the bus and relay.
 A reviewed logical client-label bind now works without a kernel bind, and [per-thread MSG_NOSIGNAL
 compatibility](docs/BYTE_SIGNAL_COMPATIBILITY.md) preserves the SDK's handler.
 The SDK now authenticates through the private gate. A [bounded subscription lab
-profile](docs/PRIVATE_BUS_SUBSCRIPTIONS.md) permits its first AddMatch while
-retaining driver-only reception and a one-rule quota. The next registration hits
-that quota. Usable Alice mode, service compatibility and permanent switching
+profile](docs/PRIVATE_BUS_SUBSCRIPTIONS.md) permits bounded AddMatch registrations
+while retaining driver-only reception. The actual SDK registers two BlueZ
+watchers and stops because that service is absent. Usable Alice mode, service compatibility and permanent switching
 remain unfinished.
 
 The [live private metadata observer](docs/PRIVATE_MATCH_OBSERVER.md) now captures
-the SDK's first subscription through the private daemon API, after an independent
-own positive control. It verifies subscription removal and observer closure;
-actual rule evidence stays private and the quota remains unchanged.
+the SDK's [bounded subscription set](docs/PRIVATE_MATCH_SET.md) through the private
+daemon API, after an independent two-rule own positive control. It verifies
+subscription removal and observer closure; actual rule evidence stays private.
 
 ## Development
 

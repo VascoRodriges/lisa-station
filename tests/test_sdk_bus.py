@@ -24,10 +24,10 @@ def evidence():
         ))
         rows.append(dict(event="sdk-match-observer", role=role, snapshot_captured=True,
                          own_fixture_match=role == "own-elf", sdk_subscription_removed=True,
-                         observer_closed=True, queries=3, private_metadata_only=True))
+                         observer_closed=True, queries=3, peak_rules=2, private_metadata_only=True))
     return rows + [
-        dict(event="sdk-subscription-policy", checks=23, failures=0, driver_signal_received=True,
-             peer_signal_blocked=True, rule_limit=1, connections_closed=True, own_controls_only=True),
+        dict(event="sdk-subscription-policy", checks=26, failures=0, driver_signal_received=True,
+             peer_signal_blocked=True, rule_limit=4, connections_closed=True, own_controls_only=True),
         dict(selftest="sdk-private-bus", ok=True, sdk_executed=True, audio_opened=False, functionality_verified=False),
         dict(event="private-bus-parent", checks=5, failures=0, unrelated_internet_controls=True),
         dict(event="private-bus-exit", code=0), dict(event="private-bus-cleanup", ok=True),
@@ -81,7 +81,7 @@ def test_rejects_unsafe_or_malformed_sdk_evidence(index, key, value):
     (4, "result", True), (4, "origin", 2), (4, "protocol_traffic", 0),
     (4, "auth_verified", False), (4, "auth_verified", 1), (1, "auth_verified", False),
     (4, "protocol_traffic", False),
-    (6, "checks", 22), (6, "failures", 1), (6, "driver_signal_received", False),
+    (6, "checks", 23), (6, "failures", 1), (6, "driver_signal_received", False),
     (6, "peer_signal_blocked", False), (6, "rule_limit", 2), (6, "rule_limit", True),
     (6, "connections_closed", False), (6, "own_controls_only", False),
     (7, "functionality_verified", True), (7, "audio_opened", True), (7, "sdk_executed", False),
@@ -98,6 +98,7 @@ def test_rejects_incomplete_control_and_overstated_scope(index, key, value):
 @pytest.mark.parametrize("key,value", [
     ("snapshot_captured", False), ("sdk_subscription_removed", False), ("observer_closed", False),
     ("private_metadata_only", False), ("queries", 0), ("queries", 41), ("queries", True),
+    ("peak_rules", 0), ("peak_rules", 5), ("peak_rules", True), ("peak_rules", "2"),
 ])
 def test_requires_current_private_snapshot_and_teardown(index, key, value):
     rows = evidence()
@@ -112,6 +113,20 @@ def test_requires_independent_known_own_fixture_before_sdk():
     rows = evidence()
     rows[5]["own_fixture_match"] = True
     assert not evaluate_events(rows)
+
+
+@pytest.mark.parametrize("count", [1, 3, 4])
+def test_requires_two_own_rules_before_actual_sdk(count):
+    rows = evidence()
+    rows[2]["peak_rules"] = count
+    assert not evaluate_events(rows)
+
+
+@pytest.mark.parametrize("count", [1, 2, 3, 4])
+def test_accepts_only_bounded_platform_peak_without_claiming_full_compatibility(count):
+    rows = evidence()
+    rows[5]["peak_rules"] = count
+    assert evaluate_events(rows)
 
 
 @pytest.mark.parametrize("value", [None, {}, True, [None] * 11])

@@ -3,7 +3,7 @@
 The explicit `--run-sdk` lab mode in `private_bus_probe.c` now admits the actual
 platform SDK beside the private daemon and sealed byte relay. It qualifies the
 storage, descriptor, binding and process boundaries. **The SDK now authenticates
-and installs its first subscription, but hits the one-rule quota next; usable
+and installs two subscriptions, but the required BlueZ service is absent; usable
 Alice mode remains unfinished.**
 
 This is separate from the default own-client test and from production switching.
@@ -91,8 +91,8 @@ The own control first completes this challenge, real OK, local FD rejection and
 Hello/GetId through the private daemon. The platform SDK then loads the pinned
 binding, creates 17 threads, authenticates and sends binary method traffic. The
 SDK lab profile now allows AddMatch, with reception still limited to the bus
-driver. The daemon confirms that the SDK connection has reached its one-rule
-quota while registering another signal handler. All threads and sibling actors
+driver, with a four-rule lab cap. The SDK registers two BlueZ ObjectManager
+watchers and stops with ServiceUnknown because org.bluez is absent. All threads and sibling actors
 are drained. This is protocol compatibility, not a
 usable Alice mode or approved service/subscription schema.
 
@@ -102,11 +102,12 @@ this evidence and bidirectional traffic for both clients; boundary checks alone
 cannot pass the authentication milestone. Host relay controls check that rejected
 and failed authentication attempts never acquire this flag.
 
-The [private metadata observer](PRIVATE_MATCH_OBSERVER.md) now samples the first
-registered rule through the admitted daemon API after scalar readv events. The
-own-rule positive control, removal of SDK state after teardown and closure of
+The [private metadata observer](PRIVATE_MATCH_OBSERVER.md) now samples a
+[bounded rule set](PRIVATE_MATCH_SET.md) through the admitted daemon API after
+scalar readv events. The two-rule own positive control, removal of SDK state after teardown and closure of
 the separate parent descriptor are mandatory evidence. SDK I/O, authentication
-and audio buffers are never inspected. The quota remains one.
+and audio buffers are never inspected. The default profile retains its one-rule
+cap and denies both AddMatch and Stats.
 
 The completed trials preserved stock process/configuration identities, boot identity and
 firewall rules. All owned actors were reaped and private mount underlays released.
@@ -114,7 +115,7 @@ The control also exercised disappearing register sets during group exit without
 losing the SDK-family drain or reaping its siblings.
 
 Qualified probe SHA256:
-`caf2ea1cfb12a4317c7090cab83d11e94c43f9e1911d38cebafb76d9e3b3cded`.
+`5aae2d77de2c0cfbf0dabe5aba4e1a8c3d7bd19048f232e9d99020501e053d5b`.
 Client binding:
 `29e08ce7dde7430d21ffe33e2e7b223bb47ceab300b6956577c723177e6d2b07`.
 The server library is unchanged. Seven factory cases pass 122 native checks on
@@ -122,7 +123,7 @@ the speaker and fortified host, including signal masks, pending signals, handler
 preservation, logical-bind rejection and ordering.
 The auth state machine passes 62917 host checks and the socket relay 94 checks,
 also under sanitizers. The [subscription profile](PRIVATE_BUS_SUBSCRIPTIONS.md)
-now has 23 policy/lifecycle controls plus live observer proofs. Ruff and 1505
+now has 26 policy/lifecycle controls plus live observer proofs. Ruff and 1520
 Python/HA tests pass; the matrix remains at
 45 native targets.
 

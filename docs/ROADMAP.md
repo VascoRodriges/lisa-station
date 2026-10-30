@@ -242,7 +242,8 @@ adapted without a kernel bind. [Per-thread MSG_NOSIGNAL
 compatibility](BYTE_SIGNAL_COMPATIBILITY.md) now preserves the SDK handler and
 pending signals. The SDK now completes real EXTERNAL challenge authentication
 through the private gate. A [separate subscription lab profile](PRIVATE_BUS_SUBSCRIPTIONS.md)
-now permits its first AddMatch with driver-only reception and a one-rule quota.
+now permits bounded AddMatch registrations with driver-only reception and a
+four-rule lab quota; the default profile retains one and denies AddMatch.
 Own controls verify broad/eavesdropping matches do not bypass receive policy,
 forbidden methods remain denied and connections close. Further subscriptions,
 service compatibility, service schemas and the full permanent switching/voice/HA
@@ -251,6 +252,9 @@ roadmap remain open.
 A [bounded match-rule metadata decoder](PRIVATE_MATCH_SNAPSHOT.md) now qualifies
 the private daemon's Stats reply format with synthetic fixtures. A
 [live parent observer](PRIVATE_MATCH_OBSERVER.md) now composes that decoder with
-private API queries after scalar SDK readv events. It verifies an own known rule,
-captures the first SDK subscription privately and proves SDK state removal and
-observer closure. The subscription quota and unfinished production scope remain.
+private API queries after scalar SDK readv events. Its
+[bounded set audit](PRIVATE_MATCH_SET.md) verifies two known own rules, captures
+two actual BlueZ ObjectManager watchers privately and proves SDK state removal
+and observer closure. The next dependency is the absent org.bluez service;
+host-bus forwarding and service access remain denied. All permanent production
+scope remains unfinished.

@@ -1,6 +1,6 @@
 /* Bounded little-endian a{sas} from the admitted PRIVATE daemon's Stats API.
  * No SDK memory, authentication/audio buffers, general variants or recursion.
- * These limits match the current lab's four clients and one rule per client.
+ * Default decoding permits one rule; the explicit bounded audit accepts up to four.
  * The caller supplies valid, distinct input and output buffers. */
 #ifndef LISA_PRIVATE_MATCH_SNAPSHOT_H
 #define LISA_PRIVATE_MATCH_SNAPSHOT_H
@@ -10,8 +10,9 @@
 #define MATCH_CLIENTS 4u
 #define MATCH_NAME 64u
 #define MATCH_RULE 1024u
+#define MATCH_RULES 4u
 #define MATCH_BODY 4096u
-struct private_match_entry {char name[MATCH_NAME],rule[MATCH_RULE+1];unsigned rules;};
+struct private_match_entry {char name[MATCH_NAME],rule[MATCH_RULE+1],extra[MATCH_RULES-1][MATCH_RULE+1];unsigned rules;};
 struct private_match_snapshot {unsigned clients,rules;struct private_match_entry entry[MATCH_CLIENTS];};
 struct private_match_cursor {const unsigned char *bytes;size_t size,position;};
 static inline uint32_t match_u32(const unsigned char *p){return (uint32_t)p[0]|(uint32_t)p[1]<<8|(uint32_t)p[2]<<16|(uint32_t)p[3]<<24;}
@@ -47,10 +48,14 @@ static inline int match_name(const char *name){
         else{if(!((value>='a'&&value<='z')||(value>='A'&&value<='Z')||(value>='0'&&value<='9')||value=='_'||value=='-'))return 0;++part;}
     }return dots>0&&part>0;
 }
-static inline int private_match_decode(const void *body,size_t size,struct private_match_snapshot *output){
+static inline const char *private_match_rule(const struct private_match_entry *entry,unsigned index){
+    if(!entry||index>=entry->rules||index>=MATCH_RULES)return NULL;
+    return index?entry->extra[index-1]:entry->rule;
+}
+static inline int private_match_decode_limit(const void *body,size_t size,unsigned limit,struct private_match_snapshot *output){
     if(!output)return -1;
     memset(output,0,sizeof(*output));
-    if(!body||size<8||size>MATCH_BODY)return -1;
+    if(!body||size<8||size>MATCH_BODY||!limit||limit>MATCH_RULES)return -1;
     struct private_match_cursor c={body,size,4};size_t bytes=match_u32(c.bytes);
     if(match_align(&c,8,size)||bytes!=size-c.position)return -1;
     struct private_match_snapshot next={0};
@@ -63,12 +68,18 @@ static inline int private_match_decode(const void *body,size_t size,struct priva
         bytes=match_u32(c.bytes+c.position);c.position+=4;
         if(bytes>size-c.position)return -1;
         size_t end=c.position+bytes;
-        if(c.position<end){if(match_string(&c,end,entry->rule,sizeof(entry->rule)))return -1;entry->rules=1;++next.rules;}
+        while(c.position<end){
+            if(entry->rules==limit)return -1;
+            char *rule=entry->rules?entry->extra[entry->rules-1]:entry->rule;
+            if(match_string(&c,end,rule,MATCH_RULE+1))return -1;
+            ++entry->rules;++next.rules;
+        }
         if(c.position!=end)return -1;
         ++next.clients;
     }
     *output=next;return 0;
 }
+static inline int private_match_decode(const void *body,size_t size,struct private_match_snapshot *output){return private_match_decode_limit(body,size,1,output);}
 static inline const struct private_match_entry *private_match_find(const struct private_match_snapshot *s,const char *name){
     if(!s||!name)return NULL;
     for(unsigned i=0;i<s->clients&&i<MATCH_CLIENTS;++i)if(!strcmp(s->entry[i].name,name))return &s->entry[i];

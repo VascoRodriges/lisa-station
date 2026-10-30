@@ -93,13 +93,15 @@ def evaluate_events(events):
         required = dict(event="sdk-match-observer", role=role, snapshot_captured=True,
                         own_fixture_match=role == "own-elf", sdk_subscription_removed=True,
                         observer_closed=True, private_metadata_only=True)
-        if (set(observer) != set(required) | {"queries"}
+        if (set(observer) != set(required) | {"queries", "peak_rules"}
             or any(type(observer.get(k)) is not type(v) or observer[k] != v for k, v in required.items())
-            or type(observer.get("queries")) is not int or not 1 <= observer["queries"] <= 40):
+            or type(observer.get("queries")) is not int or not 1 <= observer["queries"] <= 40
+            or type(observer.get("peak_rules")) is not int or not 1 <= observer["peak_rules"] <= 4
+            or (role == "own-elf" and observer["peak_rules"] != 2)):
             return False
     wanted = [
-        dict(event="sdk-subscription-policy", checks=23, failures=0, driver_signal_received=True,
-             peer_signal_blocked=True, rule_limit=1, connections_closed=True, own_controls_only=True),
+        dict(event="sdk-subscription-policy", checks=26, failures=0, driver_signal_received=True,
+             peer_signal_blocked=True, rule_limit=4, connections_closed=True, own_controls_only=True),
         dict(selftest="sdk-private-bus", ok=True, sdk_executed=True, audio_opened=False, functionality_verified=False),
         dict(event="private-bus-parent", checks=5, failures=0, unrelated_internet_controls=True),
         dict(event="private-bus-exit", code=0), dict(event="private-bus-cleanup", ok=True),
