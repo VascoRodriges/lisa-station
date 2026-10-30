@@ -45,7 +45,7 @@ static int close_except(const int *keep,unsigned count){
         if(!retained&&close((int)value)&&errno!=EBADF)bad=1;
     }if(closedir(list))bad=1;return bad?-1:0;
 }
-static const char configuration[]=
+static const char configuration_prefix[]=
     "<busconfig><type>session</type><listen>unix:path=/run/lisa/bus</listen><auth>EXTERNAL</auth>"
     "<limit name=\"max_incoming_bytes\">65536</limit><limit name=\"max_outgoing_bytes\">65536</limit>"
     "<limit name=\"max_message_size\">8192</limit><limit name=\"max_incoming_unix_fds\">1</limit>"
@@ -56,9 +56,16 @@ static const char configuration[]=
     "<limit name=\"max_replies_per_connection\">4</limit><policy context=\"default\">"
     "<allow user=\"root\"/><deny own=\"*\"/><deny send_type=\"method_call\"/>"
     "<allow send_destination=\"org.freedesktop.DBus\" send_interface=\"org.freedesktop.DBus\" send_member=\"Hello\"/>"
-    "<allow send_destination=\"org.freedesktop.DBus\" send_interface=\"org.freedesktop.DBus\" send_member=\"GetId\"/>"
-    "<deny receive_sender=\"*\"/><allow receive_sender=\"org.freedesktop.DBus\"/></policy></busconfig>\n";
-static int isolate(const char *root,const char *image,const char *binding){
+    "<allow send_destination=\"org.freedesktop.DBus\" send_interface=\"org.freedesktop.DBus\" send_member=\"GetId\"/>";
+static int bus_configuration(const char *root,int subscriptions){
+    char text[4096];int size=snprintf(text,sizeof(text),"%s%s%s%s</policy></busconfig>\n",configuration_prefix,
+        subscriptions?"<allow send_destination=\"org.freedesktop.DBus\" send_interface=\"org.freedesktop.DBus\" send_member=\"AddMatch\"/>":"",
+        subscriptions==2?"<allow send_type=\"signal\" send_interface=\"org.example.LisaProbe\" send_member=\"UnexpectedPeer\" send_path=\"/org/example/LisaProbe\"/>":"",
+        "<deny receive_sender=\"*\"/><allow receive_sender=\"org.freedesktop.DBus\"/>");
+    return size<=0||size>=(int)sizeof(text)?-1:diagnostics_text(root,"/etc/private-bus.conf",text);
+}
+static int isolate_profile(const char *root,const char *image,const char *binding,int subscriptions){
+    if(subscriptions<0||subscriptions>2)return -1;
     struct stat info;if(lstat(root,&info)||!S_ISDIR(info.st_mode)||info.st_uid||(info.st_mode&07777)!=0700)return -1;
     if(unshare(CLONE_NEWNS)||mount(NULL,"/",NULL,MS_REC|MS_PRIVATE,NULL)||
         mount("tmpfs",root,"tmpfs",MS_NOSUID|MS_NODEV,"size=2m,mode=755"))return -1;
@@ -70,7 +77,7 @@ static int isolate(const char *root,const char *image,const char *binding){
         diagnostics_text(root,"/etc/lisa-private-bus","LISA_PRIVATE_BUS_V1\n")||
         diagnostics_text(root,"/etc/machine-id","0123456789abcdef0123456789abcdef\n")||
         diagnostics_text(root,"/var/lib/dbus/machine-id","0123456789abcdef0123456789abcdef\n")||
-        diagnostics_text(root,"/etc/private-bus.conf",configuration)||
+        bus_configuration(root,subscriptions)||
         diagnostics_bind(root,"/lib","/lib",0,0)||diagnostics_bind(root,"/usr/lib","/usr/lib",0,0)||
         diagnostics_text(root,"/usr/bin/dbus-daemon","")||
         platform_storage_bind_file(root,image,"/usr/bin/dbus-daemon",1)||
@@ -81,6 +88,7 @@ static int isolate(const char *root,const char *image,const char *binding){
         chroot(root)||chdir("/"))return -1;
     return 0;
 }
+static int isolate(const char *root,const char *image,const char *binding){return isolate_profile(root,image,binding,0);}
 static int bus_guard(pid_t parent){
     if(vendor_identity_prepare(57346)||collector_extra_guard()||platform_worker_guard(parent))return -1;
 #define BUS_DENY(n) BPF_JUMP(BPF_JMP|BPF_JEQ|BPF_K,n,0,1),BPF_STMT(BPF_RET|BPF_K,SECCOMP_RET_ERRNO|EPERM)
@@ -228,6 +236,130 @@ static int connect_bus(const char *path){
     if(connect(fd,(struct sockaddr *)&address,sizeof(address))){close(fd);return -1;}
     struct ucred peer;socklen_t length=sizeof(peer);
     if(getsockopt(fd,SOL_SOCKET,SO_PEERCRED,&peer,&length)||length!=sizeof(peer)||peer.pid!=getpid()||peer.uid){close(fd);return -1;}return fd;
+}
+/* Fixed OWN policy fixtures only. This bounded reader/builder is not used to
+ * inspect SDK buffers, forward a host bus, or authorize production messages. */
+struct policy_frame {
+    unsigned char bytes[8192];size_t start,payload;unsigned type,reply;
+    char path[128],interface[128],member[96],sender[96],error[128],signature[16];
+};
+static int policy_frame_read(int fd,struct policy_frame *frame){
+    memset(frame,0,sizeof(*frame));unsigned char *bytes=frame->bytes;
+    if(full(fd,bytes,16)||bytes[0]!='l'||bytes[3]!=1||!u32(bytes+8))return -1;
+    size_t fields=u32(bytes+12);frame->payload=u32(bytes+4);frame->type=bytes[1];
+    if(fields>4096||frame->payload>4096||frame->type<2||frame->type>4)return -1;
+    frame->start=(16+fields+7)&~(size_t)7;
+    if(frame->start+frame->payload>sizeof(frame->bytes)||full(fd,bytes+16,frame->start+frame->payload-16))return -1;
+    size_t cursor=16;unsigned seen=0;
+    while(cursor<16+fields){
+        cursor=(cursor+7)&~(size_t)7;if(cursor+4>16+fields)return -1;
+        unsigned code=bytes[cursor],type=bytes[cursor+2];
+        if(!code||code>9||(seen&(1u<<code))||bytes[cursor+1]!=1||bytes[cursor+3])return -1;
+        seen|=1u<<code;cursor+=4;
+        if(type=='u'){
+            if((code!=5&&code!=9)||cursor+4>16+fields)return -1;
+            unsigned value=u32(bytes+cursor);if(code==5)frame->reply=value;else if(value)return -1;cursor+=4;
+        }else if(type=='s'||type=='o'||type=='g'){
+            size_t size;if(type=='g'){if(code!=8||cursor>=16+fields)return -1;size=bytes[cursor++];}
+            else{if(cursor+4>16+fields)return -1;size=u32(bytes+cursor);cursor+=4;}
+            if(size>=16+fields-cursor||bytes[cursor+size]||memchr(bytes+cursor,0,size))return -1;
+            char *target=NULL;size_t capacity=0;
+            switch(code){
+                case 1:if(type!='o')return -1;target=frame->path;capacity=sizeof(frame->path);break;
+                case 2:target=frame->interface;capacity=sizeof(frame->interface);break;
+                case 3:target=frame->member;capacity=sizeof(frame->member);break;
+                case 4:target=frame->error;capacity=sizeof(frame->error);break;
+                case 6:break;
+                case 7:target=frame->sender;capacity=sizeof(frame->sender);break;
+                case 8:target=frame->signature;capacity=sizeof(frame->signature);break;
+                default:return -1;
+            }
+            if(code!=1&&code!=8&&type!='s')return -1;
+            if(target){if(size>=capacity)return -1;memcpy(target,bytes+cursor,size+1);}
+            cursor+=size+1;
+        }else return -1;
+    }
+    return cursor==16+fields?0:-1;
+}
+static int policy_reply(int fd,unsigned serial,const char *error){
+    for(unsigned i=0;i<12;++i){struct policy_frame frame;if(policy_frame_read(fd,&frame)||strcmp(frame.sender,"org.freedesktop.DBus"))return -1;
+        if(frame.type==4)continue;
+        if(frame.reply!=serial)return -1;
+        if(error)return frame.type==3&&!strcmp(frame.error,error)?0:-1;
+        return frame.type==2&&!frame.payload&&!frame.signature[0]?0:-1;
+    }return -1;
+}
+/* body: 0 none, 1 string, 2 string+zero uint, 3 empty string-array+zero uint. */
+static int policy_call(int fd,const char *interface,const char *member,unsigned serial,unsigned body,const char *argument,const char *error){
+    if(body>3||strlen(interface)>96||strlen(member)>80||((body==1||body==2)&&(!argument||strlen(argument)>1024)))return -1;
+    unsigned char bytes[1536]={'l',1,0,1};put32(bytes+8,serial);
+    size_t used=string_field(bytes,16,1,'o',"/org/freedesktop/DBus");
+    used=string_field(bytes,used,2,'s',interface);used=string_field(bytes,used,3,'s',member);
+    used=string_field(bytes,used,6,'s',"org.freedesktop.DBus");
+    const char *signature=body==1?"s":body==2?"su":body==3?"asu":"";
+    if(body){size_t size=strlen(signature);used=(used+7)&~(size_t)7;bytes[used++]=8;bytes[used++]=1;bytes[used++]='g';bytes[used++]=0;
+        bytes[used++]=(unsigned char)size;memcpy(bytes+used,signature,size+1);used+=size+1;}
+    put32(bytes+12,(uint32_t)(used-16));used=(used+7)&~(size_t)7;size_t start=used;
+    if(body==1||body==2){size_t size=strlen(argument);put32(bytes+used,(uint32_t)size);used+=4;memcpy(bytes+used,argument,size+1);used+=size+1;}
+    if(body==2){used=(used+3)&~(size_t)3;put32(bytes+used,0);used+=4;}
+    if(body==3){put32(bytes+used,0);put32(bytes+used+4,0);used+=8;}
+    if(used>sizeof(bytes))return -1;put32(bytes+4,(uint32_t)(used-start));
+    return store_write_all(fd,(const char *)bytes,used)||policy_reply(fd,serial,error)?-1:0;
+}
+static int policy_peer_signal(int fd){
+    unsigned char bytes[512]={'l',4,0,1};put32(bytes+8,90);
+    size_t used=string_field(bytes,16,1,'o',"/org/example/LisaProbe");
+    used=string_field(bytes,used,2,'s',"org.example.LisaProbe");used=string_field(bytes,used,3,'s',"UnexpectedPeer");
+    put32(bytes+12,(uint32_t)(used-16));used=(used+7)&~(size_t)7;
+    return store_write_all(fd,(const char *)bytes,used);
+}
+static int policy_driver_change(int fd,const char *name){
+    for(unsigned i=0;i<12;++i){struct policy_frame frame;if(policy_frame_read(fd,&frame)||frame.type!=4||strcmp(frame.sender,"org.freedesktop.DBus"))return -1;
+        if(strcmp(frame.member,"NameOwnerChanged"))return -1;
+        if(strcmp(frame.interface,"org.freedesktop.DBus")||strcmp(frame.path,"/org/freedesktop/DBus")||strcmp(frame.signature,"sss"))return -1;
+        char strings[3][96];size_t cursor=frame.start;
+        for(unsigned j=0;j<3;++j){cursor=(cursor+3)&~(size_t)3;if(cursor+4>frame.start+frame.payload)return -1;
+            size_t size=u32(frame.bytes+cursor);cursor+=4;
+            if(size>=sizeof(strings[j])||cursor+size>=frame.start+frame.payload||frame.bytes[cursor+size]||memchr(frame.bytes+cursor,0,size))return -1;
+            memcpy(strings[j],frame.bytes+cursor,size+1);cursor+=size+1;}
+        if(cursor!=frame.start+frame.payload)return -1;
+        return !strcmp(strings[0],name)&&!strings[1][0]&&!strcmp(strings[2],name)?0:-1;
+    }return -1;
+}
+static unsigned subscription_checks;static int subscription_ok;
+static int subscription_policy(const char *endpoint){
+    int connections[3]={-1,-1,-1};char guid[33],name[128],body[128];int good=0;
+    const char *driver="org.freedesktop.DBus",*denied="org.freedesktop.DBus.Error.AccessDenied";
+    subscription_checks=0;subscription_ok=0;
+    #define POLICY(c) do{++subscription_checks;if(!(c)){fprintf(stderr,"subscription control %u line %d errno %d\n",subscription_checks,__LINE__,errno);goto done;}}while(0)
+    connections[0]=connect_bus(endpoint);POLICY(connections[0]>=3);
+    POLICY(!auth(connections[0],guid)&&!text_send(connections[0],"BEGIN\r\n")&&!method(connections[0],"Hello",1,0,body,sizeof(body)));
+    POLICY(!policy_call(connections[0],driver,"AddMatch",2,1,"type='signal',eavesdrop='true'",NULL));
+    POLICY(!policy_call(connections[0],driver,"AddMatch",3,1,"type='signal',interface='org.example.LisaProbe'","org.freedesktop.DBus.Error.LimitsExceeded"));
+    const struct {const char *interface,*member;unsigned body;const char *argument;} forbidden[]={
+        {"org.freedesktop.DBus","ListNames",0,NULL},{"org.freedesktop.DBus","ReloadConfig",0,NULL},
+        {"org.freedesktop.DBus","RemoveMatch",1,"type='signal',eavesdrop='true'"},
+        {"org.freedesktop.DBus.Monitoring","BecomeMonitor",3,NULL},
+        {"org.freedesktop.DBus","StartServiceByName",2,"org.example.LisaDenied"},
+        {"org.freedesktop.DBus","RequestName",2,"org.example.LisaDenied"},
+        {"org.freedesktop.DBus","GetNameOwner",1,"org.example.LisaDenied"},
+        {"org.example.LisaDenied","Hello",0,NULL}};
+    for(unsigned i=0;i<sizeof(forbidden)/sizeof(forbidden[0]);++i)
+        POLICY(!policy_call(connections[0],forbidden[i].interface,forbidden[i].member,4+i,forbidden[i].body,forbidden[i].argument,denied));
+    connections[1]=connect_bus(endpoint);POLICY(connections[1]>=3);
+    POLICY(!auth(connections[1],guid)&&!text_send(connections[1],"BEGIN\r\n")&&!method(connections[1],"Hello",1,0,name,sizeof(name)));
+    POLICY(!policy_driver_change(connections[0],name));
+    POLICY(!policy_peer_signal(connections[1])&&!method(connections[1],"GetId",2,0,body,sizeof(body)));
+    struct pollfd receiver={connections[0],POLLIN,0};POLICY(poll(&receiver,1,300)==0);
+    int closed=!close(connections[0]);connections[0]=-1;if(close(connections[1]))closed=0;connections[1]=-1;POLICY(closed);
+    connections[2]=connect_bus(endpoint);POLICY(connections[2]>=3);
+    POLICY(!auth(connections[2],guid)&&!text_send(connections[2],"BEGIN\r\n")&&!method(connections[2],"Hello",1,0,body,sizeof(body)));
+    POLICY(!policy_call(connections[2],driver,"AddMatch",2,1,"type='signal',eavesdrop='true'",NULL));
+    closed=!close(connections[2]);connections[2]=-1;POLICY(closed);good=1;subscription_ok=1;
+done:
+    for(unsigned i=0;i<3;++i)if(connections[i]>=0)close(connections[i]);
+    #undef POLICY
+    return good?0:-1;
 }
 static int client_equal(const char *path,const char *expected);
 struct sdk_bus_context {int channel_fd,log_known;struct stat channel,binding,log;};
@@ -691,7 +823,10 @@ static int sdk_bus_epoch(const char *base,const char *own,const char *server_bin
         if(file<0||store_write_all(file,text,(size_t)used)||close(file))_exit(80);
         int zero=open("/dev/null",O_RDWR|O_CLOEXEC);if(zero<0)_exit(81);
         if(dup2(zero,0)<0||dup2(zero,1)<0||dup2(logs[1],2)<0)_exit(81);for(int i=0;i<3;++i)if(fcntl(i,F_SETFD,0))_exit(81);
-        int keep[]={0,1,2,listener,reload[0],reload[1]};if(close_except(keep,6)||isolate(root,"/usr/bin/dbus-daemon",server_binding)||clearenv())_exit(82);
+        /* Own controls can emit exactly their canary signal, so its absence
+         * at the subscriber tests RECEIVE policy rather than default SEND
+         * denial. The actual SDK never receives that fixture-only permission. */
+        int keep[]={0,1,2,listener,reload[0],reload[1]};if(close_except(keep,6)||isolate_profile(root,"/usr/bin/dbus-daemon",server_binding,role?1:2)||clearenv())_exit(82);
         char fd[24],pair[48];snprintf(fd,sizeof(fd),"%d",listener);snprintf(pair,sizeof(pair),"%d,%d",reload[0],reload[1]);
         for(unsigned i=3;i<6;++i)if(fcntl(keep[i],F_SETFD,0))_exit(83);
         struct rlimit cpu={3,4},data={32u*1024*1024,32u*1024*1024},files={64,64},core={0,0};
@@ -708,6 +843,7 @@ static int sdk_bus_epoch(const char *base,const char *own,const char *server_bin
         char path[80];struct stat expected,actual;snprintf(path,sizeof(path),"/proc/%ld/exe",(long)bus);int ready=0;
         if(!stat("/usr/bin/dbus-daemon",&expected))for(unsigned i=0;i<300;++i){if(!stat(path,&actual)&&actual.st_dev==expected.st_dev&&actual.st_ino==expected.st_ino){ready=1;break;}struct timespec pause={0,10000000};nanosleep(&pause,NULL);}
         if(!ready||!private_view(bus,listener,reload,0,0))good=0;
+        if(good&&!role&&subscription_policy(endpoint.sun_path))good=0;
         int backend=good?connect_bus(endpoint.sun_path):-1;int client=backend>=0?start_relay(root,own,backend,&relay):-1;
         if(client<0)good=0;else if(run_sdk(base,root,own,client_binding,client,role))good=0;
         if(relay.pid>=2&&finish_sdk_relay(&relay,role))good=0;
@@ -725,6 +861,8 @@ static int sdk_bus_epoch(const char *base,const char *own,const char *server_bin
 static int sdk_bus_coordinator(const char *base,const char *own,const char *server,const char *client){
     pid_t parent=getppid();if(parent<=1||prctl(PR_SET_PDEATHSIG,SIGKILL)||getppid()!=parent)return 2;alarm(40);
     for(unsigned role=0;role<2;++role)if(sdk_bus_epoch(base,own,server,client,role))return 2;
+    if(!subscription_ok||subscription_checks!=22)return 2;
+    printf("{\"event\":\"sdk-subscription-policy\",\"checks\":%u,\"failures\":0,\"driver_signal_received\":true,\"peer_signal_blocked\":true,\"rule_limit\":1,\"connections_closed\":true,\"own_controls_only\":true}\n",subscription_checks);
     printf("{\"selftest\":\"sdk-private-bus\",\"ok\":true,\"sdk_executed\":true,\"audio_opened\":false,\"functionality_verified\":false}\n");fflush(stdout);return 0;
 }
 static int run_epoch(const char *root,const char *executable,const char *binding,const char *client_binding,int listener_fd,const int reload[2],const char *endpoint,unsigned epoch,char guid[33]){

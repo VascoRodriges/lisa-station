@@ -44,7 +44,7 @@ def diagnostic_script():
 
 def evaluate_events(events):
     """Require SDK boundary, real EXTERNAL authentication and complete teardown."""
-    if type(events) is not list or len(events) != 8 or any(type(e) is not dict for e in events):
+    if type(events) is not list or len(events) != 9 or any(type(e) is not dict for e in events):
         return False
     for i, role in [(0, "own-elf"), (2, "platform")]:
         event = events[i]
@@ -90,6 +90,8 @@ def evaluate_events(events):
         if role == "own-elf" and (relay["result"] != 0 or relay["origin"] != 0 or not relay["protocol_traffic"]):
             return False
     wanted = [
+        dict(event="sdk-subscription-policy", checks=22, failures=0, driver_signal_received=True,
+             peer_signal_blocked=True, rule_limit=1, connections_closed=True, own_controls_only=True),
         dict(selftest="sdk-private-bus", ok=True, sdk_executed=True, audio_opened=False, functionality_verified=False),
         dict(event="private-bus-parent", checks=5, failures=0, unrelated_internet_controls=True),
         dict(event="private-bus-exit", code=0), dict(event="private-bus-cleanup", ok=True),
@@ -155,6 +157,10 @@ def main():
                 saved = remote("test ! -L " + state + "/" + name + " && head -c 65536 " + state + "/" + name)
                 if saved.returncode == 0:
                     (root / "build" / name).write_bytes(saved.stdout)
+                else:
+                    # An early control failure must not leave a prior SDK
+                    # run's private log looking like current evidence.
+                    (root / "build" / name).unlink(missing_ok=True)
     else:
         raise RuntimeError("missing canonical private SDK evidence location")
     report = dict(

@@ -33,7 +33,8 @@ pass; there are 45 native targets.
 
 The actual audio-free SDK diagnostic passes its former message-send refusal.
 The subsequent [EXTERNAL challenge update](BUS_AUTH_GATE.md)
-now authenticates the SDK, while binary method policy still rejects AddMatch.
+now authenticates the SDK. A later [subscription lab profile](PRIVATE_BUS_SUBSCRIPTIONS.md)
+allows its first AddMatch while retaining driver-only reception and a one-rule quota.
 Usable Alice functionality remains unverified. All
 SDK threads and sibling actors are drained; stock processes/configuration,
 firewall and unrelated network controls remain intact. No audio or host bus is

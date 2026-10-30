@@ -66,8 +66,10 @@ Those explicit-identity controls use no SDK, microphone, account or host bus.
 The separate [SDK diagnostic](SDK_PRIVATE_BUS_DIAGNOSTIC.md) now also authenticates
 the actual SDK with synthetic identity storage through this gate. An own third
 sibling first proves the real challenge/OK, local FD rejection and Hello/GetId.
-The SDK then reaches the daemon's binary method policy and its AddMatch request
-is denied. This is authentication compatibility, not full SDK functionality.
+The SDK then reaches the daemon's binary method policy. The later
+[subscription lab profile](PRIVATE_BUS_SUBSCRIPTIONS.md) allows its first AddMatch
+under a one-rule quota and driver-only reception. This is protocol compatibility,
+not full SDK functionality.
 
 Ruff, public-source validation and **1479 Python/HA tests** pass. CI builds 45
 native targets and repeats the fortified gate and relay self-tests. The exhaustive

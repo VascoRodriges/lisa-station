@@ -23,6 +23,8 @@ def evidence():
             result=0, origin=0, protocol_traffic=True, auth_verified=True,
         ))
     return rows + [
+        dict(event="sdk-subscription-policy", checks=22, failures=0, driver_signal_received=True,
+             peer_signal_blocked=True, rule_limit=1, connections_closed=True, own_controls_only=True),
         dict(selftest="sdk-private-bus", ok=True, sdk_executed=True, audio_opened=False, functionality_verified=False),
         dict(event="private-bus-parent", checks=5, failures=0, unrelated_internet_controls=True),
         dict(event="private-bus-exit", code=0), dict(event="private-bus-cleanup", ok=True),
@@ -36,7 +38,7 @@ def test_accepts_boundary_proof_with_expected_sdk_dependency_failure():
     assert evaluate_events(rows)
 
 
-@pytest.mark.parametrize("index", range(8))
+@pytest.mark.parametrize("index", range(9))
 def test_requires_complete_ordered_unique_events(index):
     rows = evidence()
     del rows[index]
@@ -76,9 +78,12 @@ def test_rejects_unsafe_or_malformed_sdk_evidence(index, key, value):
     (3, "result", True), (3, "origin", 2), (3, "protocol_traffic", 0),
     (3, "auth_verified", False), (3, "auth_verified", 1), (1, "auth_verified", False),
     (3, "protocol_traffic", False),
-    (4, "functionality_verified", True), (4, "audio_opened", True), (4, "sdk_executed", False),
-    (5, "unrelated_internet_controls", False), (5, "failures", 1),
-    (6, "code", False), (7, "ok", False),
+    (4, "checks", 21), (4, "failures", 1), (4, "driver_signal_received", False),
+    (4, "peer_signal_blocked", False), (4, "rule_limit", 2), (4, "rule_limit", True),
+    (4, "connections_closed", False), (4, "own_controls_only", False),
+    (5, "functionality_verified", True), (5, "audio_opened", True), (5, "sdk_executed", False),
+    (6, "unrelated_internet_controls", False), (6, "failures", 1),
+    (7, "code", False), (8, "ok", False),
 ])
 def test_rejects_incomplete_control_and_overstated_scope(index, key, value):
     rows = evidence()
@@ -86,7 +91,7 @@ def test_rejects_incomplete_control_and_overstated_scope(index, key, value):
     assert not evaluate_events(rows)
 
 
-@pytest.mark.parametrize("value", [None, {}, True, [None] * 8])
+@pytest.mark.parametrize("value", [None, {}, True, [None] * 9])
 def test_rejects_invalid_container(value):
     assert not evaluate_events(value)
 

@@ -2,8 +2,9 @@
 
 The explicit `--run-sdk` lab mode in `private_bus_probe.c` now admits the actual
 platform SDK beside the private daemon and sealed byte relay. It qualifies the
-storage, descriptor, binding and process boundaries. **The SDK now authenticates,
-but binary method policy rejects AddMatch; usable Alice mode remains unfinished.**
+storage, descriptor, binding and process boundaries. **The SDK now authenticates
+and installs its first subscription, but hits the one-rule quota next; usable
+Alice mode remains unfinished.**
 
 This is separate from the default own-client test and from production switching.
 The wrapper refuses installed production state and any concurrent device trial.
@@ -89,8 +90,10 @@ anonymous and different identities remain forbidden. Only the backend supplies O
 The own control first completes this challenge, real OK, local FD rejection and
 Hello/GetId through the private daemon. The platform SDK then loads the pinned
 binding, creates 17 threads, authenticates and sends binary method traffic. The
-daemon rejects AddMatch, and the SDK aborts on signal-handler registration. All
-threads and sibling actors are drained. This is protocol compatibility, not a
+SDK lab profile now allows AddMatch, with reception still limited to the bus
+driver. The daemon confirms that the SDK connection has reached its one-rule
+quota while registering another signal handler. All threads and sibling actors
+are drained. This is protocol compatibility, not a
 usable Alice mode or approved service/subscription schema.
 
 Relay evidence now includes `auth_verified`: it is set only after the gate has
@@ -105,14 +108,15 @@ The control also exercised disappearing register sets during group exit without
 losing the SDK-family drain or reaping its siblings.
 
 Qualified probe SHA256:
-`b7a3a80f5aa78cbc883e9c83209181d834367c9fb8802b20266e55edc3cce3fa`.
+`cdd6d0f33bce82030d2967d8ba5439f0d0306de1f9f75b58b2367cb5ff77fcfd`.
 Client binding:
 `29e08ce7dde7430d21ffe33e2e7b223bb47ceab300b6956577c723177e6d2b07`.
 The server library is unchanged. Seven factory cases pass 122 native checks on
 the speaker and fortified host, including signal masks, pending signals, handler
 preservation, logical-bind rejection and ordering.
 The auth state machine passes 62917 host checks and the socket relay 94 checks,
-also under sanitizers. Ruff and 1479 Python/HA tests pass; the matrix remains at
+also under sanitizers. The [subscription profile](PRIVATE_BUS_SUBSCRIPTIONS.md)
+adds 22 device policy controls. Ruff and 1488 Python/HA tests pass; the matrix remains at
 45 native targets.
 
 Next work is to review the SDK's subscription and service requirements, retaining

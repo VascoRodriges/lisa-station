@@ -83,5 +83,6 @@ permanent supervision, mode/boot/voice and HA migration remain unfinished.
 The subsequent [SDK admission diagnostic](SDK_PRIVATE_BUS_DIAGNOSTIC.md) verifies
 this immutable library mapping in the actual platform SDK. A reviewed logical
 client-label bind, per-thread MSG_NOSIGNAL and real EXTERNAL challenge are now
-adapted. Binary method policy still rejects the SDK's AddMatch request. The own-client qualification above
+adapted. The subscription lab profile now permits its first AddMatch with a
+one-rule quota and driver-only reception. The own-client qualification above
 must not be interpreted as SDK compatibility.
