@@ -2,7 +2,7 @@ from copy import deepcopy
 
 import pytest
 
-from controller.qualify_sdk_bus import diagnostic_script, evaluate_events
+from controller.qualify_sdk_bus import allocation_diagnostic, diagnostic_script, evaluate_events
 
 
 def evidence():
@@ -246,3 +246,34 @@ def test_synthetic_adapter_requires_all_original_boundary_events(index):
     rows = adapter_evidence()
     del rows[index]
     assert not evaluate_events(rows, synthetic_adapter=True)
+
+
+def test_scalar_notices_distinguish_budget_from_kernel_duplication_failure():
+    budget = b"byte-factory channel-budget exhausted slots=1\n"
+    duplicate = b"byte-factory duplicate failure error=24\n"
+    assert allocation_diagnostic(budget) == dict(kind="channel-budget", slots=1)
+    assert allocation_diagnostic(duplicate) == dict(kind="duplication", errno=24)
+    assert allocation_diagnostic(budget + duplicate) == dict(kind="multiple", slots=1, errno=24)
+    assert allocation_diagnostic(b"System.Error.EMFILE: Too many open files\n") == dict(kind="unobserved")
+    assert allocation_diagnostic(b"unrelated\xff\n" + budget) == dict(kind="channel-budget", slots=1)
+
+
+@pytest.mark.parametrize("data", [
+    None, "text", b"x" * 65537,
+    b"byte-factory channel-budget exhausted slots=0\n",
+    b"byte-factory channel-budget exhausted slots=5\n",
+    b"byte-factory channel-budget exhausted slots=01\n",
+    b"byte-factory channel-budget exhausted slots=1 extra\n",
+    b"byte-factory duplicate failure error=0\n",
+    b"byte-factory duplicate failure error=024\n",
+    b"byte-factory duplicate failure error=4096\n",
+    b"byte-factory duplicate failure error=24\n" * 2,
+    b"byte-factory channel-budget exhausted slots=1\n" * 2,
+])
+def test_malformed_or_repeated_notices_never_infer_an_allocation_cause(data):
+    assert allocation_diagnostic(data) == dict(kind="invalid")
+
+
+@pytest.mark.parametrize("truncated", [True, 1, None])
+def test_incomplete_allocation_diagnostics_are_not_inferred(truncated):
+    assert allocation_diagnostic(b"byte-factory channel-budget exhausted slots=1\n", truncated=truncated) == dict(kind="invalid")

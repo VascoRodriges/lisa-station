@@ -3,8 +3,9 @@
 The explicit `--run-sdk-adapter` lab now returns one synthetic Adapter1 object
 from the private ObjectManager. The SDK gets past the missing-default-adapter
 failure and next reports EMFILE while opening a bus connection. The one-shot
-client factory currently receives only one channel; attribution of the new
-allocation failure must be confirmed before admitting another channel. Raising
+client factory currently receives only one channel. The subsequent
+[scalar allocation diagnostic](CHANNEL_ALLOCATION_DIAGNOSTIC.md) confirms that
+this one-shot budget is exhausted. Raising
 the file limit or enabling raw sockets is not a justified fix.
 
 This experiment adds no method permissions beyond the existing

@@ -144,6 +144,10 @@ missing-object dependency without exposing hardware. The next observed failure
 concerns opening another bus connection; channel admission/lifecycle review is
 required before expanding the diagnostic.
 
+The [allocation diagnostic](docs/CHANNEL_ALLOCATION_DIAGNOSTIC.md) now confirms
+that this refusal comes from the one-shot channel budget. Independent
+two-channel SDK admission and teardown remain the next composition step.
+
 ## Development
 
 Use Python 3.14 on Linux in an isolated virtual environment:

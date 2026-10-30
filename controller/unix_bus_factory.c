@@ -14,6 +14,7 @@ struct bus_slot{struct unix_byte_adapter identity;int source;_Atomic int active,
 static struct bus_slot slots[BUS_FACTORY_SLOTS];
 static unsigned slot_count;
 static _Atomic unsigned next_slot;
+static _Atomic unsigned exhaustion_notice,duplicate_notice;
 static pthread_once_t once=PTHREAD_ONCE_INIT;
 static int diagnostic;
 static void initialize(void){
@@ -52,12 +53,18 @@ int socket(int domain,int type,int protocol){
     ensure_initialized();
     if(domain!=AF_UNIX||(type&~(SOCK_CLOEXEC|SOCK_NONBLOCK))!=SOCK_STREAM||protocol){errno=EPERM;return -1;}
     unsigned index=atomic_load(&next_slot);
-    for(;;){if(index>=slot_count){errno=EMFILE;return -1;}
+    for(;;){if(index>=slot_count){
+            if(diagnostic&&!atomic_exchange(&exhaustion_notice,1))fprintf(stderr,"byte-factory channel-budget exhausted slots=%u\n",slot_count);
+            errno=EMFILE;return -1;
+        }
         if(atomic_compare_exchange_weak(&next_slot,&index,index+1))break;}
     struct bus_slot *slot=&slots[index];
     if(unix_byte_adapter_ready(&slot->identity,0,1))return -1;
     int fd=fcntl(slot->source,type&SOCK_CLOEXEC?F_DUPFD_CLOEXEC:F_DUPFD,3);
-    if(fd<0){int error=errno;close(slot->source);errno=error;return -1;}
+    if(fd<0){int error=errno;
+        if(diagnostic&&!atomic_exchange(&duplicate_notice,1))fprintf(stderr,"byte-factory duplicate failure error=%d\n",error);
+        close(slot->source);errno=error;return -1;
+    }
     int mode=fcntl(fd,F_GETFL);
     if(mode<0||fcntl(fd,F_SETFL,type&SOCK_NONBLOCK?mode|O_NONBLOCK:mode&~O_NONBLOCK)){
         int error=errno;close(fd);close(slot->source);errno=error;return -1;}

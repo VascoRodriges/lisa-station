@@ -7,12 +7,37 @@ production isolation claim. Private SDK logs stay under build/ and on device.
 import argparse
 import hashlib
 import json
+import re
 import subprocess
 from pathlib import Path
 
 from controller.lab_artifact import canonical_lab_artifact
 from controller.qualify_private_bus import SCRIPT as BUS_SCRIPT
 from controller.qualify_socket_close import rules_only
+
+
+def allocation_diagnostic(data, *, truncated=False):
+    """Classify scalar library notices; never use log text as admission evidence."""
+    if type(data) is not bytes or len(data) > 65536 or type(truncated) is not bool or truncated:
+        return dict(kind="invalid")
+    found = {}
+    prefixes = [(b"byte-factory channel-budget", "channel-budget", rb"byte-factory channel-budget exhausted slots=([1-4])"),
+                (b"byte-factory duplicate failure", "duplication", rb"byte-factory duplicate failure error=([1-9][0-9]{0,3})")]
+    for line in data.splitlines():
+        for prefix, kind, pattern in prefixes:
+            if not line.startswith(prefix):
+                continue
+            match = re.fullmatch(pattern, line)
+            if kind in found or not match or int(match[1]) > 4095:
+                return dict(kind="invalid")
+            found[kind] = int(match[1])
+    if len(found) == 2:
+        return dict(kind="multiple", slots=found["channel-budget"], errno=found["duplication"])
+    if "channel-budget" in found:
+        return dict(kind="channel-budget", slots=found["channel-budget"])
+    if "duplication" in found:
+        return dict(kind="duplication", errno=found["duplication"])
+    return dict(kind="unobserved")
 
 
 def diagnostic_script(*, empty_bluez=False, synthetic_adapter=False):
@@ -210,6 +235,12 @@ def main():
         audio_captured=False, sdk_executed=any(e.get("event") == "sdk-bus-diagnostic" and e.get("role") == "platform" and e.get("exec_verified") is True for e in events),
         host_bus_forwarded=False, production_mode_changed=False,
         isolation_verified=False, functionality_verified=False,
+    )
+    prefix = "adapter-" if args.synthetic_adapter else "bluez-" if args.empty_bluez else ""
+    log = root / "build" / f"{prefix}sdk1-stderr.private.txt"
+    diagnostic = next((event for event in events if event.get("event") == "sdk-bus-diagnostic" and event.get("role") == "platform"), {})
+    report["allocation_diagnostic"] = allocation_diagnostic(
+        log.read_bytes() if log.exists() else b"", truncated=diagnostic.get("private_stderr_truncated", False),
     )
     (root / f"build/{report_name}-qualification.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report, indent=2))

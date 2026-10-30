@@ -277,3 +277,8 @@ that missing-object check, with no new method permissions or hardware access.
 Its next failure is EMFILE while opening a bus connection. Confirming the source
 and safely composing independent one-shot channels are the next IPC tasks;
 full service compatibility and all permanent production phases remain pending.
+
+The [allocation diagnostic](CHANNEL_ALLOCATION_DIAGNOSTIC.md) now attributes
+EMFILE to the supplied one-shot channel budget, independently of generic SDK
+exception text. It preserves allocation and kernel policy. Two-channel SDK
+ownership/admission, separate relay lifecycles and retirement remain required.

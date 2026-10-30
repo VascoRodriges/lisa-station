@@ -314,10 +314,18 @@ static int factory_actor(int output,int control,pid_t parent){
     errno=0;check(sendmsg(alias,&message,MSG_NOSIGNAL|MSG_DONTWAIT)<0&&errno==EPIPE);
     check(factory_no_pending_pipe()&&factory_mask_is(&original)&&!sigaction(SIGPIPE,NULL,&current)&&current.sa_handler==SIG_DFL);
     check(!sigaction(SIGPIPE,&previous,NULL));
+    /* Capture only our own scalar diagnostic, after the other error controls. */
+    char diagnostic_path[]="/tmp/lisa-factory-diagnostic.XXXXXX";int diagnostic_fd=mkstemp(diagnostic_path);
+    check(diagnostic_fd>=3&&!unlink(diagnostic_path));if(diagnostic_fd<3)return 9;
+    check(dup2(diagnostic_fd,2)==2&&!close(diagnostic_fd));
     errno=0;check(socket(AF_UNIX,SOCK_STREAM,0)<0&&errno==EMFILE);
     DENIED(connect(output,(struct sockaddr *)&address,sizeof(address)));
     check(!close(alias)&&!close(second));check(fd_count()==5);
     errno=0;check(socket(AF_UNIX,SOCK_STREAM,0)<0&&errno==EMFILE);
+    char diagnostic_text[160]={0};ssize_t diagnostic_size=-1;
+    if(lseek(2,0,SEEK_SET)==0)diagnostic_size=read(2,diagnostic_text,sizeof(diagnostic_text)-1);
+    const char expected_diagnostic[]="byte-factory channel-budget exhausted slots=2\n";
+    check(diagnostic_size==(ssize_t)strlen(expected_diagnostic)&&!memcmp(diagnostic_text,expected_diagnostic,strlen(expected_diagnostic)));
     struct report result={checks,failures,2,getpid()};
     if(write(output,&result,sizeof(result))!=(ssize_t)sizeof(result))return 9;
     return failures?9:0;
@@ -409,7 +417,7 @@ static int factory_selftest(const char *executable,const char *library){
             check(!read_full(channel[1][0],&other,1)&&other==(variant?'L':'B'));
             if(!variant){close(channel[0][0]);channel[0][0]=-1;if(write(commands[1],"E",1)!=1)return 2;}
             received=!read_full(reports[0],&result,sizeof(result));
-            check(received&&result.process==child&&result.epoch==2&&result.checks==(variant?12u:66u)&&!result.failures);
+            check(received&&result.process==child&&result.epoch==2&&result.checks==(variant?12u:69u)&&!result.failures);
             if(received)actor_total+=result.checks;else kill(child,SIGKILL);
         }
         int status;pid_t done;do{done=waitpid(child,&status,0);}while(done<0&&errno==EINTR);

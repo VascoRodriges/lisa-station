@@ -10,7 +10,7 @@ def evidence():
         dict(
             event="unix-factory-case",
             case=i,
-            actor_checks=66 if i == 0 else 12 if i == 6 else 0,
+            actor_checks=69 if i == 0 else 12 if i == 6 else 0,
             failures=0,
             expected_rejection=1 <= i <= 5,
             exit_code=125 if 1 <= i <= 5 else 0,
@@ -23,7 +23,7 @@ def evidence():
         dict(
             selftest="unix-factory",
             checks=44,
-            actor_checks=78,
+            actor_checks=81,
             cases=7,
             failures=0,
             ok=True,
@@ -41,6 +41,13 @@ def test_accepts_binding_and_constructor_rejection_cases():
     rows = evidence()
     assert rows[7]["actor_checks"] == sum(row["actor_checks"] for row in rows[:7])
     rows[7]["actor_checks"] = 47
+    assert not evaluate_events(rows)
+
+
+@pytest.mark.parametrize("index,count", [(0, 66), (7, 78)])
+def test_requires_current_scalar_exhaustion_diagnostic_controls(index, count):
+    rows = evidence()
+    rows[index]["actor_checks"] = count
     assert not evaluate_events(rows)
 
 
