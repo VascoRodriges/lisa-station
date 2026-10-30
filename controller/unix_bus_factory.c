@@ -8,6 +8,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include "unix_byte_adapter.h"
+#include "unix_byte_signal.h"
 #define BUS_FACTORY_SLOTS 4u
 struct bus_slot{struct unix_byte_adapter identity;int source;_Atomic int active,connected,bound;};
 static struct bus_slot slots[BUS_FACTORY_SLOTS];
@@ -119,7 +120,7 @@ ssize_t sendmsg(int fd,const struct msghdr *message,int flags){
     struct unix_byte_adapter adapter;struct bus_slot *slot=find_slot(fd,&adapter);
     if(!slot)return -1;
     if(!atomic_load(&slot->connected)){errno=ENOTCONN;return -1;}
-    return message_result("sendmsg",unix_byte_adapter_send(&adapter,message,flags),message,flags);
+    return message_result("sendmsg",unix_byte_signal_send(&adapter,message,flags),message,flags);
 }
 ssize_t recvmsg(int fd,struct msghdr *message,int flags){
     struct unix_byte_adapter adapter;struct bus_slot *slot=find_slot(fd,&adapter);

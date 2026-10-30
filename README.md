@@ -118,8 +118,10 @@ The [audio-free SDK admission diagnostic](docs/SDK_PRIVATE_BUS_DIAGNOSTIC.md)
 now verifies the actual platform executable and loaded client binding, private
 storage/FD boundaries and complete thread teardown beside the bus and relay.
 The SDK still fails before bus authentication. A reviewed logical client-label
-bind now works without a kernel bind; compatibility with the SDK's SIGPIPE
-handler remains pending. No SDK protocol success or usable Alice mode is claimed.
+bind now works without a kernel bind, and [per-thread MSG_NOSIGNAL
+compatibility](docs/BYTE_SIGNAL_COMPATIBILITY.md) preserves the SDK's handler.
+The SDK reaches the authentication gate, whose handshake compatibility remains
+pending. No SDK protocol success or usable Alice mode is claimed.
 
 ## Development
 

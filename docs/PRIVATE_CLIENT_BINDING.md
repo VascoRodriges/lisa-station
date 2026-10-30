@@ -82,6 +82,6 @@ permanent supervision, mode/boot/voice and HA migration remain unfinished.
 
 The subsequent [SDK admission diagnostic](SDK_PRIVATE_BUS_DIAGNOSTIC.md) verifies
 this immutable library mapping in the actual platform SDK. A reviewed logical
-client-label bind is now adapted; SIGPIPE compatibility still blocks bus
-authentication. The own-client qualification above
+client-label bind and per-thread MSG_NOSIGNAL are now adapted; the authentication
+gate still rejects the SDK handshake. The own-client qualification above
 must not be interpreted as SDK compatibility.

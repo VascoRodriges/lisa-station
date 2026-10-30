@@ -81,15 +81,13 @@ SIGPIPE is ignored. It records no addresses, buffer contents or pointers.
 
 The actual device trial passed the own control and both independent process
 boundaries. The platform SDK loaded the pinned binding, created 16 threads and
-then aborted before authentication; all threads were drained. The logical bind
-removed the previous bind rejection. The next failure is a message-adapter
-contract: the SDK installs a SIGPIPE handler, while the current byte adapter
-requires SIGPIPE to be ignored when emulating MSG_NOSIGNAL with writev. Private
-scalar diagnostics confirm the rejected sendmsg had no ancillary data or
-destination. The private relay still saw no bidirectional SDK protocol traffic.
-Thread-local signal handling must be reviewed and qualified before changing this
-contract; neither a process-global handler override nor a raw-send fallback is
-acceptable.
+then aborted before completing authentication; all threads were drained. The
+logical bind removed the previous bind rejection. Scalar diagnostics then showed
+that a sendmsg with no destination or ancillary data was refused because the SDK
+installs its own SIGPIPE handler. The [per-thread signal wrapper](BYTE_SIGNAL_COMPATIBILITY.md)
+now resolves that contract without changing the process handler or enabling raw
+send syscalls. The SDK reaches the relay, which rejects its authentication
+sequence. SDK authentication and method authorization remain unverified.
 
 The completed trials preserved stock process/configuration identities, boot identity and
 firewall rules. All owned actors were reaped and private mount underlays released.
@@ -99,13 +97,14 @@ losing the SDK-family drain or reaping its siblings.
 Qualified probe SHA256:
 `773723bb30d4cbc5555e26a06281287114283fd951765829eca8d094adeba7b4`.
 Client binding:
-`eb056bc3c1f4d44fa542629bed1a34d390ecac5dc3f3eed26752adbc785d459a`.
-The server library is unchanged. Seven factory cases pass 101 native checks on
-the speaker and fortified host, including logical-bind rejection and ordering.
+`29e08ce7dde7430d21ffe33e2e7b223bb47ceab300b6956577c723177e6d2b07`.
+The server library is unchanged. Seven factory cases pass 122 native checks on
+the speaker and fortified host, including signal masks, pending signals, handler
+preservation, logical-bind rejection and ordering.
 Ruff and 1475 Python/HA tests pass; the matrix remains at 45 native targets.
 
-Next work is MSG_NOSIGNAL compatibility that preserves the caller's thread mask,
-pending signals and process handler, retaining independent kernel denial. Narrow service
+Next work is to review the SDK's EXTERNAL authentication variant, retaining real
+backend authentication and independent kernel denial. Narrow service
 schemas, normal cloud-Alice network policy, real identity/hardware/time/queue
 lifecycle, permanent supervision/boot/voice and HA migration remain unfinished.
 The strict local diagnostic is not the final cloud-Alice network policy and must

@@ -238,6 +238,7 @@ view under the common parent. Its tracer drains only enrolled SDK threads while
 preserving independent sibling exit reports; a nine-thread own control passes
 first. Numeric call-origin metadata distinguished denied libc name-cache sockets
 from the SDK's missing logical bind. The reviewed client-label bind is now
-adapted without a kernel bind; SDK SIGPIPE compatibility still prevents bus
-authentication. Call-path compatibility,
+adapted without a kernel bind. [Per-thread MSG_NOSIGNAL
+compatibility](BYTE_SIGNAL_COMPATIBILITY.md) now preserves the SDK handler and
+pending signals. The SDK reaches the authentication gate; handshake compatibility,
 service schemas and the full permanent switching/voice/HA roadmap remain open.

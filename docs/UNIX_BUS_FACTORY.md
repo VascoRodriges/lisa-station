@@ -37,14 +37,15 @@ The optional logical bind acknowledges only the SDK's reviewed bounded abstract
 client-label grammar `@<hex>/bus/<part>/<part>`. It never binds or renames the
 preconnected kernel object. The label may be supplied once before connect; named,
 malformed and unrelated abstract addresses, repeats and post-connect calls fail.
-The raw bind syscall remains denied. Message sending still requires the byte
-adapter's SIGPIPE contract; actual SDK compatibility is not yet complete.
+The raw bind syscall remains denied. The [per-thread signal wrapper](BYTE_SIGNAL_COMPATIBILITY.md)
+now handles MSG_NOSIGNAL without replacing SDK process handlers; actual SDK
+authentication compatibility is not yet complete.
 
 ## Qualification
 
 Seven own-client cases passed on the speaker and fortified Linux host: **44
-parent checks and 57 actor checks, 101 total**. The normal client makes 47 checks;
-the two-thread client makes ten. Five malformed admission cases exit with the
+parent checks and 78 actor checks, 122 total**. The normal client makes 66 checks;
+the two-thread client makes twelve. Five malformed admission cases exit with the
 expected code 125 before running their client. The threaded client claims two
 different streams, returns each stream's own marker and exhausts the pool. Each
 fixture pthread has an explicit 1 MiB stack. An inherited large stack default
@@ -61,8 +62,8 @@ and firewall rules are preserved. The read-only root filesystem is unchanged.
 
 Qualified ARM SHA256 values:
 
-- Binding: `eb056bc3c1f4d44fa542629bed1a34d390ecac5dc3f3eed26752adbc785d459a`
-- Probe: `24d61379b7a59ae8aded89c28cb0cb5e0993f7ad0f6b2257bc5dba750e0cf6ec`
+- Binding: `29e08ce7dde7430d21ffe33e2e7b223bb47ceab300b6956577c723177e6d2b07`
+- Probe: `a09252ce258c48f704dd4c61eb9843cc6fcfa3c98faf78556bcb0d462a7d8ac8`
 
 Ruff and **1475 Python/HA tests** pass. There are 45 native build targets. CI
 builds the binding and repeats the own-client host trial alongside the original

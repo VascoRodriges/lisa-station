@@ -232,6 +232,14 @@ static int selftest(const char *executable){
     printf("{\"selftest\":\"unix-channel\",\"checks\":%u,\"actor_checks\":%u,\"epochs\":2,\"failures\":%u,\"ok\":%s,\"own_mock_only\":true,\"audio_opened\":false,\"isolation_verified\":false}\n",checks,total,failures,failures?"false":"true");
     return failures?2:0;
 }
+static volatile sig_atomic_t factory_sigpipes;
+static void factory_sigpipe(int number){if(number==SIGPIPE)++factory_sigpipes;}
+static int factory_mask_is(const sigset_t *expected){
+    sigset_t actual;if(pthread_sigmask(SIG_SETMASK,NULL,&actual))return 0;
+    for(int signal=1;signal<NSIG;++signal)if(sigismember(&actual,signal)!=sigismember(expected,signal))return 0;
+    return 1;
+}
+static int factory_no_pending_pipe(void){sigset_t pending;return !sigpending(&pending)&&!sigismember(&pending,SIGPIPE);}
 static int factory_actor(int output,int control,pid_t parent){
     alarm(12);check(getppid()==parent&&prctl(PR_GET_NO_NEW_PRIVS,0,0,0,0)==1&&prctl(PR_GET_SECCOMP,0,0,0,0)==2);
     check(fd_count()==7);
@@ -279,7 +287,12 @@ static int factory_actor(int output,int control,pid_t parent){
     errno=0;check(sendmsg(first,&message,MSG_NOSIGNAL)<0&&errno==EOPNOTSUPP);
     message.msg_name=NULL;message.msg_namelen=0;
     errno=0;check(recvmsg(first,&message,MSG_PEEK)<0&&errno==EOPNOTSUPP);
+    struct sigaction handler={.sa_handler=factory_sigpipe},previous,current;sigemptyset(&handler.sa_mask);
+    sigset_t original,blocked,pending;check(!sigaction(SIGPIPE,&handler,&previous));
+    check(!pthread_sigmask(SIG_SETMASK,NULL,&original));
     byte='A';check(sendmsg(first,&message,MSG_NOSIGNAL|MSG_DONTWAIT)==1);
+    check(factory_mask_is(&original));check(!sigaction(SIGPIPE,NULL,&current)&&current.sa_handler==factory_sigpipe);
+    check(!factory_sigpipes&&factory_no_pending_pipe());
     int second=socket(AF_UNIX,SOCK_STREAM,0);check(second>=3);if(second<3)return 9;
     check(!(fcntl(second,F_GETFD)&FD_CLOEXEC));check(!(fcntl(second,F_GETFL)&O_NONBLOCK));
     memset(address.sun_path,0,sizeof(address.sun_path));strcpy(address.sun_path,"/run/dbus/system_bus_socket");
@@ -287,17 +300,31 @@ static int factory_actor(int output,int control,pid_t parent){
     check(recvmsg(second,&message,0)==1&&byte=='L');byte='B';check(sendmsg(second,&message,MSG_NOSIGNAL)==1);
     int alias=dup(first);check(alias>=3);if(alias<3)return 9;
     check(!close(first));byte='D';check(sendmsg(alias,&message,MSG_NOSIGNAL|MSG_DONTWAIT)==1);
+    char command=0;check(!read_full(control,&command,1)&&command=='E');
+    errno=0;check(sendmsg(alias,&message,MSG_NOSIGNAL|MSG_DONTWAIT)<0&&errno==EPIPE);
+    check(!factory_sigpipes&&factory_no_pending_pipe());check(factory_mask_is(&original));
+    check(!raise(SIGPIPE)&&factory_sigpipes==1);
+    sigemptyset(&blocked);sigaddset(&blocked,SIGPIPE);
+    check(!pthread_sigmask(SIG_BLOCK,&blocked,NULL)&&!raise(SIGPIPE));
+    errno=0;check(sendmsg(alias,&message,MSG_NOSIGNAL|MSG_DONTWAIT)<0&&errno==EPIPE);
+    check(!sigpending(&pending)&&sigismember(&pending,SIGPIPE)&&factory_sigpipes==1);
+    struct timespec zero={0,0};check(sigtimedwait(&blocked,NULL,&zero)==SIGPIPE);
+    check(!pthread_sigmask(SIG_SETMASK,&original,NULL)&&!sigaction(SIGPIPE,NULL,&current)&&current.sa_handler==factory_sigpipe);
+    handler.sa_handler=SIG_DFL;check(!sigaction(SIGPIPE,&handler,NULL));
+    errno=0;check(sendmsg(alias,&message,MSG_NOSIGNAL|MSG_DONTWAIT)<0&&errno==EPIPE);
+    check(factory_no_pending_pipe()&&factory_mask_is(&original)&&!sigaction(SIGPIPE,NULL,&current)&&current.sa_handler==SIG_DFL);
+    check(!sigaction(SIGPIPE,&previous,NULL));
     errno=0;check(socket(AF_UNIX,SOCK_STREAM,0)<0&&errno==EMFILE);
     DENIED(connect(output,(struct sockaddr *)&address,sizeof(address)));
     check(!close(alias)&&!close(second));check(fd_count()==5);
     errno=0;check(socket(AF_UNIX,SOCK_STREAM,0)<0&&errno==EMFILE);
     struct report result={checks,failures,2,getpid()};
     if(write(output,&result,sizeof(result))!=(ssize_t)sizeof(result))return 9;
-    (void)control;return failures?9:0;
+    return failures?9:0;
 }
 struct concurrent_client{_Atomic int *ready,*start;int good;char token;};
 static void *factory_client_thread(void *argument){
-    struct concurrent_client *client=argument;atomic_fetch_add(client->ready,1);
+    struct concurrent_client *client=argument;sigset_t before;if(pthread_sigmask(SIG_SETMASK,NULL,&before))return NULL;atomic_fetch_add(client->ready,1);
     while(!atomic_load(client->start)){struct timespec pause={0,1000000};nanosleep(&pause,NULL);}
     int fd=socket(AF_UNIX,SOCK_STREAM|SOCK_NONBLOCK|SOCK_CLOEXEC,0);if(fd<3)return NULL;
     struct sockaddr_un address={.sun_family=AF_UNIX};strcpy(address.sun_path,"/run/dbus/system_bus_socket");
@@ -306,12 +333,13 @@ static void *factory_client_thread(void *argument){
         !connect(fd,(struct sockaddr *)&address,sizeof(address))&&
         recvmsg(fd,&message,MSG_DONTWAIT|MSG_CMSG_CLOEXEC)==1&&(value=='K'||value=='L')&&
         !message.msg_controllen&&sendmsg(fd,&message,MSG_DONTWAIT|MSG_NOSIGNAL)==1;
-    int closed=!close(fd);client->token=value;client->good=good&&closed;return NULL;
+    int closed=!close(fd);client->token=value;client->good=good&&closed&&factory_mask_is(&before);return NULL;
 }
 static int factory_concurrent_actor(int output,int control,pid_t parent){
     alarm(12);check(getppid()==parent&&fd_count()==7);
     errno=0;long raw=syscall(SYS_socket,AF_UNIX,SOCK_STREAM|SOCK_CLOEXEC,0);int gated=raw==-1&&errno==EPERM;check(gated);
     if(!gated){if(raw>=0)close((int)raw);return 9;}
+    struct sigaction action={.sa_handler=SIG_DFL};sigemptyset(&action.sa_mask);check(!sigaction(SIGPIPE,&action,NULL));
     _Atomic int ready=0,start=0;struct concurrent_client clients[2]={{&ready,&start,0,0},{&ready,&start,0,0}};pthread_t threads[2];int created[2];
     /* A runner's inherited stack limit can make glibc reserve tens of MiB
      * per pthread and exhaust the deliberately small child DATA budget.
@@ -324,6 +352,7 @@ static int factory_concurrent_actor(int output,int control,pid_t parent){
     for(unsigned i=0;i<2000&&atomic_load(&ready)!=2;++i){struct timespec pause={0,1000000};nanosleep(&pause,NULL);}
     check(atomic_load(&ready)==2);atomic_store(&start,1);
     for(unsigned i=0;i<2;++i){if(created[i])check(!pthread_join(threads[i],NULL)&&clients[i].good);else check(0);}
+    check(!sigaction(SIGPIPE,NULL,&action)&&action.sa_handler==SIG_DFL&&factory_no_pending_pipe());
     check((clients[0].token=='K'&&clients[1].token=='L')||(clients[0].token=='L'&&clients[1].token=='K'));
     errno=0;check(socket(AF_UNIX,SOCK_STREAM,0)<0&&errno==EMFILE);check(fd_count()==5);
     struct report result={checks,failures,2,getpid()};if(write(output,&result,sizeof(result))!=(ssize_t)sizeof(result))return 9;
@@ -378,13 +407,14 @@ static int factory_selftest(const char *executable,const char *library){
             char reply[2]={0},other=0;
             check(!read_full(channel[0][0],reply,variant?1:2)&&(variant?reply[0]=='K':!memcmp(reply,"AD",2)));
             check(!read_full(channel[1][0],&other,1)&&other==(variant?'L':'B'));
+            if(!variant){close(channel[0][0]);channel[0][0]=-1;if(write(commands[1],"E",1)!=1)return 2;}
             received=!read_full(reports[0],&result,sizeof(result));
-            check(received&&result.process==child&&result.epoch==2&&result.checks==(variant?10u:47u)&&!result.failures);
+            check(received&&result.process==child&&result.epoch==2&&result.checks==(variant?12u:66u)&&!result.failures);
             if(received)actor_total+=result.checks;else kill(child,SIGKILL);
         }
         int status;pid_t done;do{done=waitpid(child,&status,0);}while(done<0&&errno==EINTR);
         check(done==child&&WIFEXITED(status)&&WEXITSTATUS(status)==(rejected?125:0));
-        for(unsigned i=0;i<2;++i)close(channel[i][0]);
+        for(unsigned i=0;i<2;++i)if(channel[i][0]>=0)close(channel[i][0]);
         close(reports[0]);close(commands[1]);
         printf("{\"event\":\"unix-factory-case\",\"case\":%u,\"actor_checks\":%u,\"failures\":%u,\"expected_rejection\":%s,\"exit_code\":%d,\"exit_signal\":%d,\"own_mock_only\":true}\n",
             variant,rejected?0:result.checks,rejected?0:result.failures,rejected?"true":"false",WIFEXITED(status)?WEXITSTATUS(status):-1,WIFSIGNALED(status)?WTERMSIG(status):0);fflush(stdout);

@@ -84,7 +84,7 @@ def evaluate_events(events):
         expected = dict(
             event="unix-factory-case",
             case=index,
-            actor_checks=47 if index == 0 else 10 if index == 6 else 0,
+            actor_checks=66 if index == 0 else 12 if index == 6 else 0,
             failures=0,
             expected_rejection=1 <= index <= 5,
             exit_code=125 if 1 <= index <= 5 else 0,
@@ -96,7 +96,7 @@ def evaluate_events(events):
     expected = dict(
         selftest="unix-factory",
         checks=44,
-        actor_checks=57,
+        actor_checks=78,
         cases=7,
         failures=0,
         ok=True,
