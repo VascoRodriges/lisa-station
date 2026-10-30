@@ -114,6 +114,12 @@ The [immutable client binding](docs/PRIVATE_CLIENT_BINDING.md) now qualifies a
 separate own client beside the bus and relay in private platform storage. The
 actual SDK, permanent modes/boot/voice and HA migration remain unfinished.
 
+The [audio-free SDK admission diagnostic](docs/SDK_PRIVATE_BUS_DIAGNOSTIC.md)
+now verifies the actual platform executable and loaded client binding, private
+storage/FD boundaries and complete thread teardown beside the bus and relay.
+The SDK still fails to open its bus: raw socket calls bypass the mapped binding
+and remain blocked. No SDK protocol success or usable Alice mode is claimed.
+
 ## Development
 
 Use Python 3.14 on Linux in an isolated virtual environment:

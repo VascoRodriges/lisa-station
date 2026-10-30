@@ -185,108 +185,9 @@ static int own_actor(void){
     if(atomic_load(&churn_ready)!=8)return 9;
     raise(SIGABRT);return 9;
 }
-struct task{pid_t tid;unsigned pending;int active,entering;char path[256];};
-struct observed{unsigned entries,errors,denied,sockets,opens,clones,threads,lost_registers;int status,execs,verified,bounded,drained,path_control;};
-static uint64_t now_ms(void){struct timespec ts;if(clock_gettime(CLOCK_MONOTONIC,&ts))return 0;return (uint64_t)ts.tv_sec*1000+(uint64_t)ts.tv_nsec/1000000;}
-static int reg_state(pid_t tid,unsigned *number,int32_t *result,uint32_t *first,uint32_t *second){
-    uint32_t registers[18];struct iovec buffer={registers,sizeof(registers)};
-    if(ptrace(PTRACE_GETREGSET,tid,(void *)(uintptr_t)NT_PRSTATUS,&buffer)||buffer.iov_len!=sizeof(registers))return -1;
-    *number=registers[7];*result=(int32_t)registers[0];*first=registers[0];*second=registers[1];return 0;
-}
-static int tgid_is(pid_t tid,pid_t leader){
-    char path[80],line[256];snprintf(path,sizeof(path),"/proc/%ld/status",(long)tid);FILE *file=fopen(path,"r");if(!file)return errno==ENOENT||errno==ESRCH?-1:0;
-    int good=0;while(fgets(line,sizeof(line),file)){long value;if(sscanf(line,"Tgid: %ld",&value)==1){good=value==leader;break;}}
-    fclose(file);return good;
-}
-/* Read only a pathname argument for these fixed filesystem syscall ABIs.
- * Never inspect buffers supplied to read/write, socket payloads or SDK objects. */
-static void syscall_path(pid_t tid,unsigned number,uint32_t first,uint32_t second,char path[256]){
-    uintptr_t address=0;path[0]=0;
-    if(number==SYS_open||number==SYS_access||number==SYS_stat64||number==SYS_lstat64||number==SYS_readlink||number==SYS_mkdir)address=first;
-    if(number==SYS_openat||number==SYS_faccessat||number==SYS_fstatat64||number==SYS_readlinkat||number==SYS_mkdirat)address=second;
-    if(!address)return;
-    for(unsigned offset=0;offset<252;offset+=sizeof(long)){
-        errno=0;long word=ptrace(PTRACE_PEEKDATA,tid,(void *)(address+offset),NULL);
-        if(word==-1&&errno){path[0]=0;return;}
-        const unsigned char *bytes=(const unsigned char *)&word;
-        for(unsigned i=0;i<sizeof(long);++i){unsigned position=offset+i;unsigned char value=bytes[i];
-            if(!value){path[position]=0;return;}
-            path[position]=value>=32&&value<=126?(char)value:'?';}
-    }
-    path[252]=0;
-}
-static int trace_worker(pid_t child,const char *expected,int *retained,struct observed *result,int paths){
-    unsigned path_bytes=0;struct task tasks[80]={{.tid=child,.active=1,.entering=1}};unsigned count=1,live=1,stops=0;
-    uint64_t deadline=now_ms()+6000;int killing=0,failed=0,leader_owned=1;
-    #define TRACE_FAIL() do{if(!failed)fprintf(stderr,"sdk trace stage %d errno %d\n",__LINE__,errno);failed=1;}while(0)
-    while(live){
-        if((now_ms()>deadline||stops>20000)&&!killing){result->bounded=1;if(leader_owned)kill(child,SIGKILL);killing=1;deadline=now_ms()+3000;}
-        if(killing&&now_ms()>deadline){TRACE_FAIL();break;}
-        int status=0;pid_t tid=waitpid(-1,&status,__WALL|WNOHANG);
-        if(tid==0){struct timespec pause={0,100000};nanosleep(&pause,NULL);continue;}
-        if(tid<0){if(errno==EINTR)continue;if(errno==ECHILD&&killing){live=0;break;}TRACE_FAIL();break;}
-        unsigned slot=0;while(slot<count&&tasks[slot].tid!=tid)++slot;
-        if(slot==count){
-            if(count>=80||tgid_is(tid,child)==0){TRACE_FAIL();if(leader_owned)kill(child,SIGKILL);killing=1;deadline=now_ms()+3000;continue;}
-            tasks[count++]=(struct task){.tid=tid,.active=1,.entering=1};++live;
-        }
-        if(WIFEXITED(status)||WIFSIGNALED(status)){
-            if(tid==child){result->status=status;leader_owned=0;}
-            if(tasks[slot].active){tasks[slot].active=0;--live;}
-            continue;
-        }
-        if(!WIFSTOPPED(status)){TRACE_FAIL();break;}
-        /* An exited proc entry may disappear before its queued ptrace event.
-         * These TIDs come only from this guard-filtered child's clone events
-         * or this tracer's wait queue; no unrelated process is attached. */
-        if(killing){ptrace(PTRACE_CONT,tid,NULL,(void *)(intptr_t)SIGKILL);continue;}
-        ++stops;int signal=WSTOPSIG(status),deliver=0;unsigned event=(unsigned)status>>16;
-        if(event==PTRACE_EVENT_EXEC){
-            struct stat data,actual,target;char path[PATH_MAX];++result->execs;
-            snprintf(path,sizeof(path),"/proc/%ld/exe",(long)child);
-            if(result->execs!=1||tid!=child||stat(path,&actual)||stat(expected,&target)||actual.st_dev!=target.st_dev||actual.st_ino!=target.st_ino||!private_view(child,&data))TRACE_FAIL();
-            else{result->verified=1;snprintf(path,sizeof(path),"/proc/%ld/root/data/quasar",(long)child);
-                *retained=open(path,O_RDONLY|O_DIRECTORY|O_CLOEXEC);if(*retained<0)TRACE_FAIL();}
-        }else if(event==PTRACE_EVENT_CLONE){
-            ++result->threads;unsigned long created=0;
-            if(ptrace(PTRACE_GETEVENTMSG,tid,NULL,&created)||created<2||created>INT_MAX)TRACE_FAIL();
-            else{unsigned next=0;while(next<count&&tasks[next].tid!=(pid_t)created)++next;
-                if(next==count){if(count>=80||tgid_is((pid_t)created,child)==0)TRACE_FAIL();
-                    else{tasks[count++]=(struct task){.tid=(pid_t)created,.active=1,.entering=1};++live;}}}
-        }else if(signal==(SIGTRAP|0x80)){
-            unsigned number;int32_t returned;uint32_t first,second;if(reg_state(tid,&number,&returned,&first,&second)){
-                if(errno==ESRCH){++result->lost_registers;continue;}
-                TRACE_FAIL();
-            }
-            else if(tasks[slot].entering){tasks[slot].pending=number;
-                syscall_path(tid,number,first,second,tasks[slot].path);
-                if(result->verified){++result->entries;if(number==SYS_socket||number==SYS_socketpair||number==SYS_connect)++result->sockets;
-                    if(number==SYS_open||number==SYS_openat)++result->opens;
-                    if(number==SYS_clone||number==SYS_fork||number==SYS_vfork)++result->clones;}
-            }else if(result->verified&&returned<0&&returned>=-4095){
-                ++result->errors;if(returned==-EPERM)++result->denied;
-                if(returned==-ENOENT&&!strcmp(tasks[slot].path,"/lisa-sdk-missing-metadata"))result->path_control=1;
-                if(tasks[slot].path[0]&&path_bytes<32768){char row[320];
-                    int used=snprintf(row,sizeof(row),"%u %d %s\n",tasks[slot].pending,-returned,tasks[slot].path);
-                    if(used<=0||used>=(int)sizeof(row)||store_write_all(paths,row,(size_t)used))TRACE_FAIL();
-                    else path_bytes+=(unsigned)used;}
-            }
-            tasks[slot].entering=!tasks[slot].entering;
-        }else if(signal!=SIGSTOP){deliver=signal;}
-        if(failed&&!killing){if(leader_owned)kill(child,SIGKILL);killing=1;deadline=now_ms()+3000;}
-        if(ptrace(PTRACE_SYSCALL,tid,NULL,(void *)(intptr_t)(killing?SIGKILL:deliver))&&errno!=ESRCH){TRACE_FAIL();break;}
-    }
-    if(failed){if(leader_owned)kill(child,SIGKILL);
-        for(unsigned i=0;i<count;++i)if(tasks[i].active)ptrace(PTRACE_CONT,tasks[i].tid,NULL,(void *)(intptr_t)SIGKILL);
-        uint64_t end=now_ms()+3000;
-        while(now_ms()<end){int status;pid_t done=waitpid(-1,&status,__WALL|WNOHANG);
-            if(done<0&&errno==ECHILD){live=0;break;}
-            if(done>0&&WIFSTOPPED(status))ptrace(PTRACE_CONT,done,NULL,(void *)(intptr_t)SIGKILL);
-            if(!done){struct timespec pause={0,1000000};nanosleep(&pause,NULL);}}
-    }
-    #undef TRACE_FAIL
-    result->drained=!live;
-    return failed||live?-1:0;
+#include "sdk_metadata_trace.h"
+static int sdk_original_view(pid_t child,struct stat *data,void *unused){
+    (void)unused;return private_view(child,data);
 }
 static int execute(const char *base,int rootdir,unsigned index,const char *seeds,const char *profile,const char *own){
     char root[PATH_MAX];snprintf(root,sizeof(root),"%s/root%u",base,index);if(mkdir(root,0700))return -1;
@@ -327,7 +228,7 @@ static int execute(const char *base,int rootdir,unsigned index,const char *seeds
     const char *path_name=index==0?"own-paths.private.txt":index==1?"platform-paths.private.txt":"media-paths.private.txt";
     int path_log=openat(rootdir,path_name,O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);
     if(path_log<0){kill(child,SIGKILL);ptrace(PTRACE_CONT,child,NULL,(void *)(intptr_t)SIGKILL);waitpid(child,NULL,__WALL);return -1;}
-    int retained=-1;struct observed result={0};int traced=trace_worker(child,index?"/system/vendor/quasar/maind":own,&retained,&result,path_log);
+    int retained=-1;struct observed result={0};int traced=sdk_trace_worker(child,index?"/system/vendor/quasar/maind":own,&retained,&result,path_log,sdk_original_view,NULL,0,NULL);
     if(close(path_log))good=0;
     unsigned objects=0;const char *paths[]={"soundLogStorageDir","soundLogStorage.dat","data/local_events.lmdb","data/capability_states.lmdb","session_storage.dat","own-composition-proof"};
     for(unsigned i=0;i<sizeof(paths)/sizeof(paths[0]);++i){struct stat object;

@@ -1,4 +1,4 @@
-/* Private standard-bus diagnostic, not a host-bus forwarder or SDK runner.
+/* Private standard-bus diagnostic, with an explicit audio-free SDK lab mode.
  * Namespace/capability preparation precedes every instruction of the daemon.
  * The wire helpers below are bounded OWN test clients, not a production parser. */
 #define _GNU_SOURCE
@@ -9,6 +9,9 @@
 #include <linux/capability.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <pthread.h>
+#include <stdatomic.h>
+#include <sys/sysmacros.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/statvfs.h>
@@ -20,6 +23,7 @@
 #include "loopback_socket.h"
 #include "bus_byte_relay.h"
 #include "platform_sdk_guard.h"
+#include "sdk_metadata_trace.h"
 #ifndef __arm__
 #error This namespace diagnostic requires the reviewed ARM device ABI
 #endif
@@ -218,6 +222,101 @@ static int connect_bus(const char *path){
     struct ucred peer;socklen_t length=sizeof(peer);
     if(getsockopt(fd,SOL_SOCKET,SO_PEERCRED,&peer,&length)||length!=sizeof(peer)||peer.pid!=getpid()||peer.uid){close(fd);return -1;}return fd;
 }
+static int client_equal(const char *path,const char *expected);
+struct sdk_bus_context {int channel_fd,log_known;struct stat channel,binding,log;};
+static int sdk_bus_caps_zero(pid_t child){
+    char path[80],line[256];snprintf(path,sizeof(path),"/proc/%ld/status",(long)child);FILE *file=fopen(path,"r");if(!file)return 0;
+    /* This reviewed 4.9 kernel omits NoNewPrivs from status. The trusted
+     * prepared child checks PR_GET_NO_NEW_PRIVS before its initial stop;
+     * the irreversible setting survives exec. Reject any exported mismatch. */
+    unsigned caps=0;int group=0,nnp=1,filter=0,one=0,tgid=0,valid=1,uid=0;
+    while(fgets(line,sizeof(line),file)){
+        unsigned long long value;
+        if(sscanf(line,"CapInh: %llx",&value)==1||sscanf(line,"CapPrm: %llx",&value)==1||
+            sscanf(line,"CapEff: %llx",&value)==1||sscanf(line,"CapBnd: %llx",&value)==1||sscanf(line,"CapAmb: %llx",&value)==1){++caps;if(value)valid=0;}
+        unsigned a,b,c,d;
+        if(sscanf(line,"Gid: %u %u %u %u",&a,&b,&c,&d)==4)group=a==57342&&b==a&&c==a&&d==a;
+        if(sscanf(line,"Uid: %u %u %u %u",&a,&b,&c,&d)==4)uid=!(a|b|c|d);
+        if(sscanf(line,"NoNewPrivs: %u",&a)==1)nnp=a==1;
+        if(sscanf(line,"Seccomp: %u",&a)==1)filter=a==2;
+        if(sscanf(line,"Threads: %u",&a)==1)one=a==1;
+        if(sscanf(line,"Tgid: %u",&a)==1)tgid=a==(unsigned)child;
+    }
+    if(ferror(file))valid=0;
+    fclose(file);return valid&&caps==5&&uid&&group&&nnp&&filter&&one&&tgid;
+}
+static int sdk_bus_view(pid_t child,struct stat *data,void *opaque){
+    struct sdk_bus_context *context=opaque;
+    char path[PATH_MAX],a[128],b[128];struct stat info,host;struct statvfs fs;
+    snprintf(path,sizeof(path),"/proc/%ld/ns/mnt",(long)child);
+    ssize_t x=readlink("/proc/self/ns/mnt",a,sizeof(a)),y=readlink(path,b,sizeof(b));
+    if(x<=0||y<=0||(x==y&&!memcmp(a,b,(size_t)x))){fprintf(stderr,"sdk view stage %d\n",__LINE__);return 0;}
+    snprintf(path,sizeof(path),"/proc/%ld/root",(long)child);if(statvfs(path,&fs)||!(fs.f_flag&ST_RDONLY)){fprintf(stderr,"sdk view stage %d\n",__LINE__);return 0;}
+    const char *mounts[]={"/data/quasar","/tmp","/dev/shm"};dev_t devices[3];
+    for(unsigned i=0;i<3;++i){snprintf(path,sizeof(path),"/proc/%ld/root%s",(long)child,mounts[i]);
+        if(stat(path,&info)||stat(mounts[i],&host)||info.st_dev==host.st_dev||statvfs(path,&fs)||
+            fs.f_flag&ST_RDONLY||!(fs.f_flag&ST_NOEXEC)||!(fs.f_flag&ST_NOSUID)||!(fs.f_flag&ST_NODEV)||
+            (uint64_t)fs.f_blocks*fs.f_frsize>(i==0?32u:i==1?16u:4u)*1024*1024){fprintf(stderr,"sdk view stage %d\n",__LINE__);return 0;}
+        devices[i]=info.st_dev;if(!i)*data=info;
+    }
+    if(devices[0]==devices[1]||devices[0]==devices[2]||devices[1]==devices[2])return 0;
+    snprintf(path,sizeof(path),"/proc/%ld/root/proc/cmdline",(long)child);
+    if(stat(path,&info)||stat("/proc/cmdline",&host)||!S_ISREG(info.st_mode)||info.st_dev!=host.st_dev||info.st_ino!=host.st_ino||
+        statvfs(path,&fs)||!(fs.f_flag&ST_RDONLY)){fprintf(stderr,"sdk boot metadata mismatch\n");return 0;}
+    const char *hidden[]={"/proc/self","/proc/1","/sys","/dev/snd","/dev/log","/dev/keymaster_svc",
+        "/var/run/dbus/system_bus_socket","/bkupgrade","/data/opt","/tmp/messages","/dev/shm/alsa-audio-monitor-v2"};
+    for(unsigned i=0;i<sizeof(hidden)/sizeof(hidden[0]);++i){snprintf(path,sizeof(path),"/proc/%ld/root%s",(long)child,hidden[i]);
+        if(!lstat(path,&info)||errno!=ENOENT){fprintf(stderr,"sdk view stage %d\n",__LINE__);return 0;}}
+    snprintf(path,sizeof(path),"/proc/%ld/fd",(long)child);DIR *fds=opendir(path);if(!fds){fprintf(stderr,"sdk view stage %d\n",__LINE__);return 0;}
+    unsigned count=0;int valid=1;struct dirent *entry;
+    if(stat("/dev/null",&host)){closedir(fds);{fprintf(stderr,"sdk view stage %d\n",__LINE__);return 0;}}
+    while((entry=readdir(fds))){char *end;long n=strtol(entry->d_name,&end,10);if(*end)continue;
+        if(n<0||(n>2&&n!=context->channel_fd)){valid=0;break;}
+        ++count;snprintf(path,sizeof(path),"/proc/%ld/fd/%ld",(long)child,n);
+        if(stat(path,&info)){valid=0;break;}
+        if(n==context->channel_fd){if(!S_ISSOCK(info.st_mode)||info.st_dev!=context->channel.st_dev||info.st_ino!=context->channel.st_ino){valid=0;break;}}
+        else if(n==2){struct stat log;snprintf(path,sizeof(path),"/proc/%ld/root/data/quasar/diagnostic.stderr",(long)child);
+            if(stat(path,&log)||!S_ISREG(info.st_mode)||info.st_dev!=data->st_dev||info.st_ino!=log.st_ino||info.st_nlink!=1||(info.st_mode&07777)!=0600){valid=0;break;}
+            if(context->log_known&&(info.st_dev!=context->log.st_dev||info.st_ino!=context->log.st_ino)){valid=0;break;}
+            context->log=info;context->log_known=1;}
+        else if(!S_ISCHR(info.st_mode)||info.st_rdev!=host.st_rdev){valid=0;break;}
+    }
+    closedir(fds);
+    if(!valid||count!=4||!sdk_bus_caps_zero(child)){fprintf(stderr,"sdk view final %u %d\n",count,valid);return 0;}
+    snprintf(path,sizeof(path),"/proc/%ld/root/opt/lisa/client.so",(long)child);
+    if(stat(path,&info)||info.st_dev!=context->binding.st_dev||info.st_ino!=context->binding.st_ino||
+        statvfs(path,&fs)||!(fs.f_flag&ST_RDONLY)||!(fs.f_flag&ST_NOSUID)||!(fs.f_flag&ST_NODEV))return 0;
+    return 1;
+}
+static int sdk_binding_mapped(pid_t child,void *opaque){
+    const struct sdk_bus_context *context=opaque;char path[80],line[PATH_MAX+256];snprintf(path,sizeof(path),"/proc/%ld/maps",(long)child);
+    FILE *maps=fopen(path,"r");if(!maps)return errno==ENOENT||errno==ESRCH?0:-1;
+    int found=0,valid=1;unsigned count=0;
+    while(fgets(line,sizeof(line),maps)){
+        unsigned major,minor;unsigned long long inode;
+        if(++count>8192||!strchr(line,'\n')){valid=0;break;}
+        if(sscanf(line,"%*s %*s %*s %x:%x %llu",&major,&minor,&inode)==3&&
+            makedev(major,minor)==context->binding.st_dev&&inode==(unsigned long long)context->binding.st_ino)found=1;
+    }if(ferror(maps))valid=0;fclose(maps);return valid?found:-1;
+}
+static _Atomic int sdk_control_ready;
+static void *sdk_control_thread(void *unused){(void)unused;atomic_fetch_add(&sdk_control_ready,1);
+    for(;;){struct timespec pause={0,1000000};nanosleep(&pause,NULL);}return NULL;}
+static int sdk_bus_control(int source,pid_t parent){
+    if(!client_equal("/etc/lisa-platform-storage","LISA_PLATFORM_STORAGE_V1\n")||getppid()!=parent||
+        prctl(PR_GET_NO_NEW_PRIVS,0,0,0,0)!=1||!unix_byte_channel_valid(source,parent))return 9;
+    errno=0;int missing=open("/lisa-sdk-missing-metadata",O_RDONLY|O_NOFOLLOW|O_CLOEXEC);if(missing>=0||errno!=ENOENT)return 9;
+    struct sockaddr_un address={.sun_family=AF_UNIX};strcpy(address.sun_path,"/var/run/dbus/system_bus_socket");
+    int fd=socket(AF_UNIX,SOCK_STREAM|SOCK_CLOEXEC,0);char guid[33],body[128];
+    if(fd<3||connect(fd,(struct sockaddr *)&address,sizeof(address))||relay_auth(fd,guid)||
+        method(fd,"Hello",1,0,body,sizeof(body))||method(fd,"GetId",2,0,body,sizeof(body))||close(fd))return 9;
+    int marker=open("/data/quasar/own-bus-gate-proof",O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);
+    if(marker<0||store_write_all(marker,"no audio\n",9)||close(marker))return 9;
+    pthread_t threads[9];for(unsigned i=0;i<9;++i)if(pthread_create(&threads[i],NULL,sdk_control_thread,NULL))return 9;
+    for(unsigned i=0;i<2000&&atomic_load(&sdk_control_ready)!=9;++i){struct timespec pause={0,1000000};nanosleep(&pause,NULL);}
+    if(atomic_load(&sdk_control_ready)!=9)return 9;
+    raise(SIGABRT);return 9;
+}
 struct relay_report {struct bus_relay_stats stats;unsigned checks,failures;};
 struct relay_handle {pid_t pid;int report;char root[PATH_MAX];};
 struct client_ready {uint32_t magic;int channel;};
@@ -313,12 +412,27 @@ static int client_view(pid_t pid,const char *binding,const char *image,const int
         if(sscanf(line,"Seccomp: %u",&a)==1)filter=a==2;
     }if(ferror(status))valid=0;fclose(status);return valid&&caps==5&&group&&uid&&filter;
 }
+static int copy_sdk_profile(const char *path){
+    struct stat before,after;int source=open("/system/vendor/quasar/quasar.cfg",O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC);
+    if(source<0)return -1;
+    if(fstat(source,&before)||!S_ISREG(before.st_mode)||before.st_uid||before.st_nlink!=1||before.st_mode&0022||before.st_size<=0||before.st_size>1024*1024){close(source);return -1;}
+    int target=open(path,O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);
+    if(target<0){close(source);return -1;}
+    char buffer[4096];ssize_t size;off_t total=0;int failed=0;
+    while((size=read(source,buffer,sizeof(buffer)))>0){total+=size;if(total>before.st_size||store_write_all(target,buffer,(size_t)size)){failed=1;break;}}
+    if(size<0||total!=before.st_size||fstat(source,&after)||!platform_seed_same(&before,&after)||fsync(target))failed=1;
+    if(close(source))failed=1;
+    if(close(target))failed=1;
+    return failed?-1:0;
+}
 /* Stage files exist only on a disposable private tmpfs, never the host DATA. */
-static int client_stage(const char *stage,char seeds[PATH_MAX],char profile[PATH_MAX]){
+static int client_stage(const char *stage,char seeds[PATH_MAX],char profile[PATH_MAX],int firmware){
     if(unshare(CLONE_NEWNS)||mount(NULL,"/",NULL,MS_REC|MS_PRIVATE,NULL)||
         mount("tmpfs",stage,"tmpfs",MS_NOSUID|MS_NODEV|MS_NOEXEC,"size=1m,mode=700")||
         snprintf(seeds,PATH_MAX,"%s/seeds",stage)>=PATH_MAX||mkdir(seeds,0700)||
-        snprintf(profile,PATH_MAX,"%s/profile.json",stage)>=PATH_MAX||diagnostics_text(stage,"/profile.json","{}\n"))return -1;
+        snprintf(profile,PATH_MAX,"%s/profile.json",stage)>=PATH_MAX)return -1;
+    if(firmware){if(copy_sdk_profile(profile))return -1;}
+    else if(diagnostics_text(stage,"/profile.json","{}\n"))return -1;
     int root=open(seeds,O_RDONLY|O_DIRECTORY|O_NOFOLLOW|O_CLOEXEC);if(root<0)return -1;int failed=0;
     for(unsigned i=0;i<PLATFORM_SEED_COUNT;++i){int fd=openat(root,platform_seed_name(i),O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);
         const char *text=i==0?"synthetic-identity\n":i==1?"{}\n":"";
@@ -342,7 +456,7 @@ static int start_client(const char *root,const char *image,const char *binding,i
         int zero=open("/dev/null",O_RDWR|O_CLOEXEC);if(zero<0)_exit(81);
         for(int i=0;i<3;++i)if(dup2(zero,i)<0||fcntl(i,F_SETFD,0))_exit(81);
         int keep[]={0,1,2,channel,reports[1],commands[0]};char seeds[PATH_MAX],profile[PATH_MAX];
-        if(close_except(keep,6)||clearenv()||client_stage(handle->stage,seeds,profile)||
+        if(close_except(keep,6)||clearenv()||client_stage(handle->stage,seeds,profile,0)||
             platform_storage_enter_with_binding(handle->root,seeds,profile,image,0,binding))_exit(82);
         struct rlimit cpu={3,4},data={32u*1024*1024,32u*1024*1024},core={0,0};
         if(setrlimit(RLIMIT_CPU,&cpu)||setrlimit(RLIMIT_DATA,&data)||setrlimit(RLIMIT_CORE,&core)||
@@ -464,6 +578,145 @@ static void finish_relay(struct relay_handle *handle,unsigned epoch,int origin){
     printf("{\"event\":\"private-bus-relay\",\"epoch\":%u,\"actor_checks\":%u,\"failures\":%u,\"result\":%d,\"origin\":%d,\"bounded\":%s}\n",
         epoch,report.checks,report.failures,report.stats.result,report.stats.origin,received&&report.stats.maximum_output<=2*BUS_AUTH_OUTPUT&&report.stats.maximum_pending<=1024?"true":"false");
 }
+static int capture_sdk_log(int retained,const char *base,unsigned role,const struct sdk_bus_context *context,unsigned *bytes,int *truncated){
+    int input=openat(retained,"diagnostic.stderr",O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC);struct stat info;char path[PATH_MAX];
+    if(input<0)return -1;
+    if(fstat(input,&info)||!S_ISREG(info.st_mode)||info.st_dev!=context->log.st_dev||info.st_ino!=context->log.st_ino||
+        info.st_nlink!=1||(info.st_mode&07777)!=0600||info.st_size<0||info.st_size>2*1024*1024||
+        snprintf(path,sizeof(path),"%s/sdk%u-stderr.private.txt",base,role)>=(int)sizeof(path)){close(input);return -1;}
+    int output=open(path,O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600),failed=output<0;
+    char buffer[4096];*bytes=0;
+    while(!failed&&*bytes<65536){ssize_t size=read(input,buffer,sizeof(buffer));if(size<0){failed=1;break;}if(!size)break;
+        if(store_write_all(output,buffer,(size_t)size)){failed=1;break;}*bytes+=(unsigned)size;}
+    *truncated=info.st_size>(off_t)*bytes;close(input);if(output>=0&&close(output))failed=1;return failed?-1:0;
+}
+static int run_sdk(const char *base,const char *root,const char *own,const char *binding,int channel,unsigned role){
+    char sdk_root[PATH_MAX],stage[PATH_MAX];struct sdk_bus_context context={.channel_fd=channel};
+    if(snprintf(sdk_root,sizeof(sdk_root),"%s-sdk",root)>=(int)sizeof(sdk_root)||mkdir(sdk_root,0700)||
+        snprintf(stage,sizeof(stage),"%s-sdk-stage",root)>=(int)sizeof(stage)||mkdir(stage,0700)||
+        fstat(channel,&context.channel)||stat(binding,&context.binding)){close(channel);return -1;}
+    pid_t parent=getpid(),child=fork();if(child<0){close(channel);return -1;}
+    if(!child){
+        if(prctl(PR_SET_PDEATHSIG,SIGKILL)||getppid()!=parent)_exit(80);
+        char path[PATH_MAX],stamp_text[96];struct process_stamp stamp;
+        if(process_stamp(getpid(),&stamp)||snprintf(path,sizeof(path),"%s.child",sdk_root)>=(int)sizeof(path))_exit(80);
+        int record=open(path,O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);
+        int size=snprintf(stamp_text,sizeof(stamp_text),"%ld %" PRIu64 "\n",(long)getpid(),stamp.ticks);
+        if(record<0||store_write_all(record,stamp_text,(size_t)size)||fsync(record)||close(record))_exit(80);
+        int keep[]={channel};if(guardian_close_except(keep,1))_exit(81);
+        int zero=open("/dev/null",O_RDWR|O_CLOEXEC);if(zero<0)_exit(81);
+        for(int i=0;i<3;++i)if(dup2(zero,i)<0||fcntl(i,F_SETFD,0))_exit(81);if(zero>2)close(zero);
+        struct rlimit stack={1024*1024,1024*1024},cpu={4,5},data={96u*1024*1024,96u*1024*1024},memory={256u*1024*1024,256u*1024*1024},files={128,128},core={0,0},size_limit={2u*1024*1024,2u*1024*1024};
+        if(setrlimit(RLIMIT_STACK,&stack)||setrlimit(RLIMIT_CPU,&cpu)||setrlimit(RLIMIT_DATA,&data)||setrlimit(RLIMIT_AS,&memory)||
+            setrlimit(RLIMIT_CORE,&core)||setrlimit(RLIMIT_FSIZE,&size_limit)||clearenv())_exit(81);
+        char seeds[PATH_MAX],profile[PATH_MAX];const char *image=role?"/system/vendor/quasar/maind":own;
+        if(client_stage(stage,seeds,profile,1)||platform_storage_enter_with_binding(sdk_root,seeds,profile,image,1,binding)||chdir("/data/quasar"))_exit(82);
+        char fd_text[24],parent_text[24];snprintf(fd_text,sizeof(fd_text),"%d",channel);snprintf(parent_text,sizeof(parent_text),"%ld",(long)parent);
+        if(setrlimit(RLIMIT_NOFILE,&files)||fcntl(channel,F_SETFD,0)||setenv("LISA_BYTE_FDS",fd_text,1)||
+            setenv("LD_PRELOAD","/opt/lisa/client.so",1)||setenv("LD_BIND_NOW","1",1)||
+            setenv("LD_LIBRARY_PATH","/system/vendor/quasar/libs",1)||setenv("GST_PLUGIN_PATH","/system/vendor/quasar/libs",1)||
+            setenv("CA_CERTIFICATES","/system/vendor/quasar/ca-certificates.crt",1)||setenv("PWD",".",1)||setenv("MALLOC_ARENA_MAX","2",1))_exit(83);
+        int log=open("/data/quasar/diagnostic.stderr",O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);
+        if(log<0||dup2(log,2)<0)_exit(84);if(log>2)close(log);
+        if(ptrace(PTRACE_TRACEME,0,NULL,NULL)||vendor_identity_prepare(57342)||platform_sdk_guard(parent)||unix_byte_channel_guard(channel,parent))_exit(85);
+        if(raise(SIGSTOP))_exit(86);
+        if(role)execl("/system/vendor/quasar/maind","maind","--platformd",(char *)NULL);
+        else execl("/system/vendor/quasar/maind","sdk-bus-control","--sdk-control",fd_text,parent_text,(char *)NULL);
+        _exit(87);
+    }
+    int status=0;pid_t waited;do{waited=waitpid(child,&status,0);}while(waited<0&&errno==EINTR);
+    struct stat data;int stopped=waited==child&&WIFSTOPPED(status)&&WSTOPSIG(status)==SIGSTOP;
+    int good=stopped&&sdk_bus_view(child,&data,&context);check(good);
+    close(channel);
+    if(!good){if(stopped){kill(child,SIGKILL);ptrace(PTRACE_CONT,child,NULL,(void *)(intptr_t)SIGKILL);while(waitpid(child,&status,__WALL)<0&&errno==EINTR){}}return -1;}
+    long options=PTRACE_O_EXITKILL|PTRACE_O_TRACEEXEC|PTRACE_O_TRACECLONE|PTRACE_O_TRACESYSGOOD;
+    char path[PATH_MAX];if(snprintf(path,sizeof(path),"%s/sdk%u-paths.private.txt",base,role)>=(int)sizeof(path))return -1;
+    int paths=open(path,O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);
+    if(paths<0||ptrace(PTRACE_SETOPTIONS,child,NULL,(void *)options)||ptrace(PTRACE_SYSCALL,child,NULL,NULL)){
+        kill(child,SIGKILL);ptrace(PTRACE_CONT,child,NULL,(void *)(intptr_t)SIGKILL);while(waitpid(child,&status,__WALL)<0&&errno==EINTR){}if(paths>=0)close(paths);return -1;}
+    struct observed result={0};int retained=-1;
+    int traced=sdk_trace_worker(child,role?"/system/vendor/quasar/maind":own,&retained,&result,paths,sdk_bus_view,&context,1,sdk_binding_mapped);
+    if(close(paths))good=0;
+    unsigned log_bytes=0,objects=0;int truncated=0;
+    const char *names[]={"own-bus-gate-proof","soundLogStorageDir","soundLogStorage.dat","data/local_events.lmdb","data/capability_states.lmdb","session_storage.dat"};
+    if(retained>=0){
+        for(unsigned i=0;i<sizeof(names)/sizeof(names[0]);++i){struct stat info;
+            if(!fstatat(retained,names[i],&info,AT_SYMLINK_NOFOLLOW)){if(info.st_dev!=data.st_dev)good=0;else objects|=1u<<i;}
+            else if(errno!=ENOENT)good=0;}
+        if(capture_sdk_log(retained,base,role,&context,&log_bytes,&truncated))good=0;
+        close(retained);
+    }else good=0;
+    good=good&&!traced&&result.verified&&result.drained&&result.binding_seen;
+    if(!role&&(!WIFSIGNALED(result.status)||WTERMSIG(result.status)!=SIGABRT||result.threads!=9||!(objects&1)||!result.path_control))good=0;
+    if(rmdir(sdk_root)||rmdir(stage))good=0;
+    printf("{\"event\":\"sdk-bus-diagnostic\",\"role\":\"%s\",\"boundary_ok\":%s,\"exec_verified\":%s,\"binding_mapped\":%s,\"drained\":%s,\"threads\":%u,\"syscalls\":%u,\"denied\":%u,\"socket_attempts\":%u,\"lost_registers\":%u,\"bounded_stop\":%s,\"exit_code\":%d,\"exit_signal\":%d,\"private_objects_mask\":%u,\"path_control\":%s,\"private_stderr_bytes\":%u,\"private_stderr_truncated\":%s,\"synthetic_identity\":true,\"audio_opened\":false,\"functionality_verified\":false}\n",
+        role?"platform":"own-elf",good?"true":"false",result.verified?"true":"false",result.binding_seen?"true":"false",result.drained?"true":"false",result.threads,result.entries,result.denied,result.sockets,result.lost_registers,result.bounded?"true":"false",
+        WIFEXITED(result.status)?WEXITSTATUS(result.status):-1,WIFSIGNALED(result.status)?WTERMSIG(result.status):0,objects,result.path_control?"true":"false",log_bytes,truncated?"true":"false");fflush(stdout);
+    return good?0:-1;
+}
+static int finish_sdk_relay(struct relay_handle *handle,unsigned role){
+    struct relay_report report={0};int received=handle->pid>=2&&!full(handle->report,&report,sizeof(report));
+    if(handle->report>=0)close(handle->report);int status=0;pid_t done=-1;
+    if(handle->pid>=2)do{done=waitpid(handle->pid,&status,0);}while(done<0&&errno==EINTR);
+    int good=received&&report.checks==11&&!report.failures&&report.stats.result!=RELAY_REJECTED&&
+        report.stats.maximum_output<=2*BUS_AUTH_OUTPUT&&report.stats.maximum_pending<=1024&&done==handle->pid&&WIFEXITED(status)&&
+        WEXITSTATUS(status)==(report.stats.result==RELAY_EOF?0:9);
+    int traffic=report.stats.read_bytes[0]>0&&report.stats.read_bytes[1]>0&&report.stats.written_bytes[0]>0&&report.stats.written_bytes[1]>0;
+    if(!role&&(!traffic||report.stats.result!=RELAY_EOF||report.stats.origin!=BUS_CLIENT))good=0;
+    if(rmdir(handle->root))good=0;handle->pid=-1;
+    printf("{\"event\":\"sdk-bus-relay\",\"role\":\"%s\",\"boundary_ok\":%s,\"actor_checks\":%u,\"result\":%d,\"origin\":%d,\"protocol_traffic\":%s}\n",
+        role?"platform":"own-elf",good?"true":"false",report.checks,report.stats.result,report.stats.origin,traffic?"true":"false");fflush(stdout);return good?0:-1;
+}
+static int sdk_bus_epoch(const char *base,const char *own,const char *server_binding,const char *client_binding,unsigned role){
+    char root[PATH_MAX];struct sockaddr_un endpoint={.sun_family=AF_UNIX};int reload[2];
+    if(snprintf(root,sizeof(root),"%s/root%u",base,role)>=(int)sizeof(root)||mkdir(root,0700)||
+        snprintf(endpoint.sun_path,sizeof(endpoint.sun_path),"%s/listener%u",base,role)>=(int)sizeof(endpoint.sun_path))return -1;
+    int listener=socket(AF_UNIX,SOCK_STREAM|SOCK_CLOEXEC|SOCK_NONBLOCK,0);
+    if(listener<0||bind(listener,(struct sockaddr *)&endpoint,sizeof(endpoint))||listen(listener,4)||socketpair(AF_UNIX,SOCK_STREAM|SOCK_CLOEXEC,0,reload))return -1;
+    int logs[2];if(pipe2(logs,O_CLOEXEC))return -1;pid_t parent=getpid(),bus=fork();if(bus<0)return -1;
+    if(!bus){
+        if(prctl(PR_SET_PDEATHSIG,SIGKILL)||getppid()!=parent)_exit(80);
+        char path[PATH_MAX],text[96];struct process_stamp stamp;if(process_stamp(getpid(),&stamp)||snprintf(path,sizeof(path),"%s.child",root)>=(int)sizeof(path))_exit(80);
+        int file=open(path,O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);int used=snprintf(text,sizeof(text),"%ld %" PRIu64 "\n",(long)getpid(),stamp.ticks);
+        if(file<0||store_write_all(file,text,(size_t)used)||close(file))_exit(80);
+        int zero=open("/dev/null",O_RDWR|O_CLOEXEC);if(zero<0)_exit(81);
+        if(dup2(zero,0)<0||dup2(zero,1)<0||dup2(logs[1],2)<0)_exit(81);for(int i=0;i<3;++i)if(fcntl(i,F_SETFD,0))_exit(81);
+        int keep[]={0,1,2,listener,reload[0],reload[1]};if(close_except(keep,6)||isolate(root,"/usr/bin/dbus-daemon",server_binding)||clearenv())_exit(82);
+        char fd[24],pair[48];snprintf(fd,sizeof(fd),"%d",listener);snprintf(pair,sizeof(pair),"%d,%d",reload[0],reload[1]);
+        for(unsigned i=3;i<6;++i)if(fcntl(keep[i],F_SETFD,0))_exit(83);
+        struct rlimit cpu={3,4},data={32u*1024*1024,32u*1024*1024},files={64,64},core={0,0};
+        if(setenv("LD_PRELOAD","/opt/lisa/server.so",1)||setenv("LD_BIND_NOW","1",1)||setenv("LISA_LISTENER_FD",fd,1)||setenv("LISA_RELOAD_FDS",pair,1)||
+            setrlimit(RLIMIT_CPU,&cpu)||setrlimit(RLIMIT_DATA,&data)||setrlimit(RLIMIT_NOFILE,&files)||setrlimit(RLIMIT_CORE,&core)||bus_guard(parent))_exit(83);
+        alarm(20);if(raise(SIGSTOP))_exit(84);
+        execl("/usr/bin/dbus-daemon","dbus-daemon","--nofork","--nosyslog","--nopidfile","--config-file=/etc/private-bus.conf",(char *)NULL);_exit(85);
+    }
+    close(logs[1]);int status=0;pid_t done;do{done=waitpid(bus,&status,WUNTRACED);}while(done<0&&errno==EINTR);
+    int good=done==bus&&WIFSTOPPED(status)&&WSTOPSIG(status)==SIGSTOP&&private_view(bus,listener,reload,1,0);check(good);
+    struct relay_handle relay={.pid=-1,.report=-1};
+    if(good){
+        if(kill(bus,SIGCONT))good=0;
+        char path[80];struct stat expected,actual;snprintf(path,sizeof(path),"/proc/%ld/exe",(long)bus);int ready=0;
+        if(!stat("/usr/bin/dbus-daemon",&expected))for(unsigned i=0;i<300;++i){if(!stat(path,&actual)&&actual.st_dev==expected.st_dev&&actual.st_ino==expected.st_ino){ready=1;break;}struct timespec pause={0,10000000};nanosleep(&pause,NULL);}
+        if(!ready||!private_view(bus,listener,reload,0,0))good=0;
+        int backend=good?connect_bus(endpoint.sun_path):-1;int client=backend>=0?start_relay(root,own,backend,&relay):-1;
+        if(client<0)good=0;else if(run_sdk(base,root,own,client_binding,client,role))good=0;
+        if(relay.pid>=2&&finish_sdk_relay(&relay,role))good=0;
+        if(kill(bus,SIGTERM))good=0;
+        do{done=waitpid(bus,&status,0);}while(done<0&&errno==EINTR);
+        if(done!=bus||!WIFEXITED(status)||WEXITSTATUS(status))good=0;
+    }else if(done==bus&&WIFSTOPPED(status)){kill(bus,SIGKILL);waitpid(bus,&status,0);}
+    char private_log[8192],path[PATH_MAX];size_t size=0;ssize_t got;
+    while(size<sizeof(private_log)&&(got=read(logs[0],private_log+size,sizeof(private_log)-size))>0)size+=(size_t)got;close(logs[0]);
+    if(snprintf(path,sizeof(path),"%s/sdk%u-bus-stderr.private.txt",base,role)>=(int)sizeof(path))good=0;
+    else{int log=open(path,O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);if(log<0)good=0;else{if(store_write_all(log,private_log,size))good=0;if(close(log))good=0;}}
+    close(listener);close(reload[0]);close(reload[1]);if(unlink(endpoint.sun_path)||rmdir(root))good=0;
+    return good?0:-1;
+}
+static int sdk_bus_coordinator(const char *base,const char *own,const char *server,const char *client){
+    pid_t parent=getppid();if(parent<=1||prctl(PR_SET_PDEATHSIG,SIGKILL)||getppid()!=parent)return 2;alarm(40);
+    for(unsigned role=0;role<2;++role)if(sdk_bus_epoch(base,own,server,client,role))return 2;
+    printf("{\"selftest\":\"sdk-private-bus\",\"ok\":true,\"sdk_executed\":true,\"audio_opened\":false,\"functionality_verified\":false}\n");fflush(stdout);return 0;
+}
 static int run_epoch(const char *root,const char *executable,const char *binding,const char *client_binding,int listener_fd,const int reload[2],const char *endpoint,unsigned epoch,char guid[33]){
     int logs[2];check(!pipe2(logs,O_CLOEXEC));if(failures)return -1;
     pid_t parent=getpid(),child=fork();check(child>=0);if(child<0)return -1;
@@ -548,6 +801,11 @@ static int coordinator(const char *base,const char *executable,const char *bindi
 }
 int main(int argc,char **argv){
     if(argc==2&&!strcmp(argv[1],"--actor"))return own_actor();
+    if(argc==4&&!strcmp(argv[1],"--sdk-control")){
+        long values[2];for(unsigned i=0;i<2;++i){char *end;values[i]=strtol(argv[i+2],&end,10);if(*end||values[i]<3||values[i]>INT_MAX)return 2;}
+        if(getppid()!=values[1])return 2;
+        return sdk_bus_control((int)values[0],(pid_t)values[1]);
+    }
     if(argc==7&&!strcmp(argv[1],"--client-actor")){
         long values[5];for(unsigned i=0;i<5;++i){char *end;values[i]=strtol(argv[i+2],&end,10);if(*end||values[i]<(i==4?1:3)||values[i]>INT_MAX)return 2;}
         if(values[0]==values[1]||values[0]==values[2]||values[1]==values[2]||getppid()!=values[3]||values[4]>2)return 2;
@@ -558,7 +816,13 @@ int main(int argc,char **argv){
         if(values[0]==values[1]||values[0]==values[2]||values[1]==values[2]||getppid()!=values[3])return 2;
         return relay_actor((int)values[0],(int)values[1],(int)values[2],(pid_t)values[3]);
     }
-    if(argc!=5||strcmp(argv[1],"--run")||getuid()||geteuid()||getgid()||getegid())return 2;
+    if(argc!=5||(strcmp(argv[1],"--run")&&strcmp(argv[1],"--run-sdk"))||getuid()||geteuid()||getgid()||getegid())return 2;
+    int sdk=!strcmp(argv[1],"--run-sdk");
+    if(sdk){
+        char pattern[1024];int fd=open("/proc/sys/kernel/core_pattern",O_RDONLY|O_NOFOLLOW|O_CLOEXEC);if(fd<0)return 2;
+        ssize_t count=read(fd,pattern,sizeof(pattern));int closed=close(fd);
+        if(count<=0||count>=(ssize_t)sizeof(pattern)||closed||pattern[0]=='|')return 2;
+    }
     const char prefix[]="/bkupgrade/data/opt/lisa-controller-lab/private-bus.";const char *base=argv[2];
     if(strncmp(base,prefix,sizeof(prefix)-1))return 2;size_t suffix=strlen(base+sizeof(prefix)-1);if(suffix<6||suffix>16)return 2;
     for(size_t i=sizeof(prefix)-1;base[i];++i)if(!((base[i]>='a'&&base[i]<='z')||(base[i]>='A'&&base[i]<='Z')||(base[i]>='0'&&base[i]<='9')))return 2;
@@ -572,7 +836,7 @@ int main(int argc,char **argv){
     socklen_t length=(socklen_t)(offsetof(struct sockaddr_un,sun_path)+1+strlen(address.sun_path+1));
     if(bind(canary,(struct sockaddr *)&address,length)||listen(canary,1))return 2;
     pid_t child=fork();if(child<0)return 2;
-    if(!child){close(canary);int keep[]={0,1,2};if(close_except(keep,3))_exit(2);_exit(coordinator(base,executable,argv[3],argv[4]));}
+    if(!child){close(canary);int keep[]={0,1,2};if(close_except(keep,3))_exit(2);_exit(sdk?sdk_bus_coordinator(base,executable,argv[3],argv[4]):coordinator(base,executable,argv[3],argv[4]));}
     int status=0;pid_t done;do{done=waitpid(child,&status,0);}while(done<0&&errno==EINTR);
     check(done==child&&WIFEXITED(status)&&WEXITSTATUS(status)==0);
     int control=socket(AF_UNIX,SOCK_STREAM|SOCK_CLOEXEC,0);check(control>=0&&!connect(control,(struct sockaddr *)&address,length));if(control>=0)close(control);close(canary);

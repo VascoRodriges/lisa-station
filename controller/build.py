@@ -136,7 +136,7 @@ subprocess.run(
         *(
             ["-pthread"]
             if args.target
-            in {"platform-worker-probe", "platform-sdk-probe", "unix-bus-factory", "unix-channel-probe"}
+            in {"platform-worker-probe", "platform-sdk-probe", "unix-bus-factory", "unix-channel-probe", "private-bus-probe"}
             else []
         ),
         *(["-ldl"] if args.target in {"diagnostics-guard-probe", "time-clock-proof"} else []),
