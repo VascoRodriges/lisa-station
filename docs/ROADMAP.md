@@ -313,3 +313,9 @@ actual acquisition and retirement of `ru.yandex.quasar` with 34 policy controls,
 fresh driver lookups bound to SDK group names and the unchanged shared query
 budget. Prefix-like and unrelated names remain denied. The SDK next stops at
 the absent ALSA mixer; hardware access and all production phases remain pending.
+
+The [private mixer API audit](SDK_MIXER_AUDIT.md) now identifies the `default`
+control attachment and its real negative result. A separate bounded diagnostic
+factory, known real-library own control and private metadata records preserve
+the hardware denial and existing owner/relay checks. A limited connection to
+the independent hardware-volume role remains to be designed and qualified.

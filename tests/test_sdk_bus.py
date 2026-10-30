@@ -450,3 +450,59 @@ def test_owned_service_bounds_owner_queries_within_shared_budget(count):
     rows = owned_service_evidence()
     rows[10]["owner_queries"] = count
     assert evaluate_events(rows, owned_service=True)
+
+
+def mixer_evidence():
+    rows = owned_service_evidence()
+    for index, own in [(1, True), (6, False)]:
+        rows[index].update(mixer_records=1, mixer_metadata_valid=True, mixer_fixture_match=own)
+    return rows
+
+
+def test_mixer_audit_requires_new_own_control_and_owner_retirement_proof():
+    assert evaluate_events(mixer_evidence(), mixer_audit=True)
+    assert not evaluate_events(owned_service_evidence(), mixer_audit=True)
+    assert not evaluate_events(mixer_evidence(), owned_service=True)
+    assert not evaluate_events(mixer_evidence(), mixer_audit=True, owned_service=True)
+    with pytest.raises(ValueError):
+        diagnostic_script(mixer_audit=True, owned_service=True)
+    script = diagnostic_script(mixer_audit=True)
+    assert "PROBE --run-sdk-mixer-audit " in script
+    assert script.count("/root[012]-channel[01]-relay.child") == 2
+    assert script.count("for channel in 0 1; do") == 2
+    assert "rm -r" not in script
+
+
+@pytest.mark.parametrize("index,key,value", [
+    (1, "mixer_records", 0), (1, "mixer_records", 2), (1, "mixer_records", True),
+    (6, "mixer_records", 0), (6, "mixer_records", 5), (6, "mixer_records", 1.0),
+    (1, "mixer_metadata_valid", False), (6, "mixer_metadata_valid", 1),
+    (1, "mixer_fixture_match", False), (6, "mixer_fixture_match", True),
+    (1, "mixer_fixture_match", 1), (6, "private_stderr_truncated", True),
+    (1, "binding_mapped", False), (3, "auth_verified", False),
+    (10, "service_owner_retired", False), (0, "checks", 29),
+])
+def test_mixer_audit_rejects_missing_or_untyped_metadata_and_weakened_boundary(index, key, value):
+    rows = mixer_evidence()
+    rows[index][key] = value
+    assert not evaluate_events(rows, mixer_audit=True)
+
+
+@pytest.mark.parametrize("index", range(16))
+def test_mixer_audit_requires_all_ordered_unique_typed_events(index):
+    rows = mixer_evidence()
+    del rows[index]
+    assert not evaluate_events(rows, mixer_audit=True)
+    rows = mixer_evidence()
+    rows.insert(index, deepcopy(rows[index]))
+    assert not evaluate_events(rows, mixer_audit=True)
+    rows = mixer_evidence()
+    rows[index]["unexpected"] = True
+    assert not evaluate_events(rows, mixer_audit=True)
+
+
+@pytest.mark.parametrize("count", [1, 2, 3, 4])
+def test_mixer_audit_bounds_actual_metadata_records(count):
+    rows = mixer_evidence()
+    rows[6]["mixer_records"] = count
+    assert evaluate_events(rows, mixer_audit=True)

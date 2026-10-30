@@ -42,6 +42,7 @@ parser.add_argument(
         "platform-sdk-probe",
         "unix-channel-probe",
         "unix-bus-factory",
+        "unix-mixer-factory",
         "private-bus-probe",
         "bus-auth-probe",
         "bus-relay-probe",
@@ -94,6 +95,7 @@ sources = {
     "platform-sdk-probe": "platform_sdk_probe.c",
     "unix-channel-probe": "unix_channel_probe.c",
     "unix-bus-factory": "unix_bus_factory.c",
+    "unix-mixer-factory": "unix_bus_factory.c",
     "private-bus-probe": "private_bus_probe.c",
     "bus-auth-probe": "bus_auth_probe.c",
     "bus-relay-probe": "bus_relay_probe.c",
@@ -116,7 +118,7 @@ output = (
         args.target
         + (
             ".so"
-            if args.target in {"time-clock-proof", "unix-bus-factory", "private-bus-factory", "private-bus-error-factory"}
+            if args.target in {"time-clock-proof", "unix-bus-factory", "unix-mixer-factory", "private-bus-factory", "private-bus-error-factory"}
             else ".armhf"
         )
     )
@@ -138,14 +140,15 @@ subprocess.run(
         *(
             ["-pthread"]
             if args.target
-            in {"platform-worker-probe", "platform-sdk-probe", "unix-bus-factory", "unix-channel-probe", "private-bus-probe"}
+            in {"platform-worker-probe", "platform-sdk-probe", "unix-bus-factory", "unix-mixer-factory", "unix-channel-probe", "private-bus-probe"}
             else []
         ),
-        *(["-ldl"] if args.target in {"diagnostics-guard-probe", "time-clock-proof", "private-bus-error-factory"} else []),
+        *(["-ldl"] if args.target in {"diagnostics-guard-probe", "time-clock-proof", "private-bus-error-factory", "unix-mixer-factory", "private-bus-probe"} else []),
         *(["-DLISA_PRIVATE_ERROR_AUDIT=1"] if args.target == "private-bus-error-factory" else []),
+        *(["-DLISA_MIXER_DIAGNOSTIC=1"] if args.target == "unix-mixer-factory" else []),
         *(
             ["-shared", "-fPIC"]
-            if args.target in {"time-clock-proof", "unix-bus-factory", "private-bus-factory", "private-bus-error-factory"}
+            if args.target in {"time-clock-proof", "unix-bus-factory", "unix-mixer-factory", "private-bus-factory", "private-bus-error-factory"}
             else []
         ),
         "-o",

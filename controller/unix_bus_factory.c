@@ -9,6 +9,9 @@
 #include <stdio.h>
 #include "unix_byte_adapter.h"
 #include "unix_byte_signal.h"
+#ifdef LISA_MIXER_DIAGNOSTIC
+#include "mixer_attach_hook.h"
+#endif
 #define BUS_FACTORY_SLOTS 4u
 struct bus_slot{struct unix_byte_adapter identity;int source;_Atomic int active,connected,bound;};
 static struct bus_slot slots[BUS_FACTORY_SLOTS];
@@ -36,7 +39,11 @@ static void initialize(void){
     const char *trace=getenv("LISA_BYTE_DIAGNOSTIC");diagnostic=trace&&!strcmp(trace,"1");
 }
 static void ensure_initialized(void){if(pthread_once(&once,initialize))_exit(125);}
-__attribute__((constructor)) static void prepare(void){ensure_initialized();}
+__attribute__((constructor)) static void prepare(void){ensure_initialized();
+#ifdef LISA_MIXER_DIAGNOSTIC
+    const char *flag=getenv("LISA_MIXER_AUDIT");if(!flag||strcmp(flag,"1"))_exit(125);
+#endif
+}
 static struct bus_slot *find_slot(int fd,struct unix_byte_adapter *adapter){
     ensure_initialized();struct stat info;if(fstat(fd,&info)||!S_ISSOCK(info.st_mode)){errno=EPERM;return NULL;}
     for(unsigned i=0;i<slot_count;++i){

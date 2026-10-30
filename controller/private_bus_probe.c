@@ -3,6 +3,7 @@
  * The wire helpers below are bounded OWN test clients, not a production parser. */
 #define _GNU_SOURCE
 #include <errno.h>
+#include <dlfcn.h>
 #include <fcntl.h>
 #include <grp.h>
 #include <inttypes.h>
@@ -30,6 +31,7 @@
 #include "sdk_name_ledger.h"
 #include "driver_denial_record.h"
 #include "sdk_service_owner.h"
+#include "mixer_attach_record.h"
 #ifndef __arm__
 #error This namespace diagnostic requires the reviewed ARM device ABI
 #endif
@@ -38,6 +40,7 @@ static int sdk_bluez;
 static int sdk_dual;
 static int sdk_errors;
 static int sdk_owner;
+static int sdk_mixer;
 static void check(int ok){++checks;if(!ok){++failures;fprintf(stderr,"private bus check %u errno %d\n",checks,errno);}}
 static int full(int fd,void *buffer,size_t size){
     uint64_t end=guardian_milliseconds()+3000;size_t used=0;
@@ -749,7 +752,7 @@ static int sdk_binding_mapped(pid_t child,void *opaque){
 static _Atomic int sdk_control_ready;
 static void *sdk_control_thread(void *unused){(void)unused;atomic_fetch_add(&sdk_control_ready,1);
     for(;;){struct timespec pause={0,1000000};nanosleep(&pause,NULL);}return NULL;}
-static int sdk_bus_control(int source,pid_t parent,const char *provider,int adapter,int dual,int errors,int owner){
+static int sdk_bus_control(int source,pid_t parent,const char *provider,int adapter,int dual,int errors,int owner,int mixer){
     if(!client_equal("/etc/lisa-platform-storage","LISA_PLATFORM_STORAGE_V1\n")||getppid()!=parent||
         prctl(PR_GET_NO_NEW_PRIVS,0,0,0,0)!=1||!unix_byte_channel_valid(source,parent))return 9;
     errno=0;int missing=open("/lisa-sdk-missing-metadata",O_RDONLY|O_NOFOLLOW|O_CLOEXEC);if(missing>=0||errno!=ENOENT)return 9;
@@ -783,6 +786,16 @@ static int sdk_bus_control(int source,pid_t parent,const char *provider,int adap
             (owner?policy_driver_owner_pair_lost(fd,next_name):policy_driver_transition(fd,next_name,1))||method(fd,"GetId",6,0,body,sizeof(body)))return 9;
     }
     if(close(fd))return 9;
+    if(mixer){
+        void *library=dlopen("/usr/lib/libasound.so.2",RTLD_NOW|RTLD_GLOBAL);if(!library)return 9;
+        struct _snd_mixer;struct _snd_mixer *handle=NULL;
+        int (*open_mixer)(struct _snd_mixer **,int)=dlsym(RTLD_DEFAULT,"snd_mixer_open");
+        int (*attach_mixer)(struct _snd_mixer *,const char *)=dlsym(RTLD_DEFAULT,"snd_mixer_attach");
+        int (*close_mixer)(struct _snd_mixer *)=dlsym(RTLD_DEFAULT,"snd_mixer_close");
+        if(!open_mixer||!attach_mixer||!close_mixer||open_mixer(&handle,0)||!handle)return 9;
+        int attached=attach_mixer(handle,MIXER_MISSING_CONTROL),closed=close_mixer(handle);
+        if(attached>=0||closed)return 9;
+    }
     int marker=open("/data/quasar/own-bus-gate-proof",O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);
     if(marker<0||store_write_all(marker,"no audio\n",9)||close(marker))return 9;
     pthread_t threads[9];for(unsigned i=0;i<9;++i)if(pthread_create(&threads[i],NULL,sdk_control_thread,NULL))return 9;
@@ -1052,7 +1065,7 @@ static void finish_relay(struct relay_handle *handle,unsigned epoch,int origin){
     printf("{\"event\":\"private-bus-relay\",\"epoch\":%u,\"actor_checks\":%u,\"failures\":%u,\"result\":%d,\"origin\":%d,\"bounded\":%s}\n",
         epoch,report.checks,report.failures,report.stats.result,report.stats.origin,received&&report.stats.maximum_output<=2*BUS_AUTH_OUTPUT&&report.stats.maximum_pending<=1024?"true":"false");
 }
-static int capture_sdk_log(int retained,const char *base,unsigned role,const struct sdk_bus_context *context,unsigned *bytes,int *truncated){
+static int capture_sdk_log(int retained,const char *base,unsigned role,const struct sdk_bus_context *context,unsigned *bytes,int *truncated,struct mixer_attach_audit *mixer){
     int input=openat(retained,"diagnostic.stderr",O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC);struct stat info;char path[PATH_MAX];
     if(input<0)return -1;
     if(fstat(input,&info)||!S_ISREG(info.st_mode)||info.st_dev!=context->log.st_dev||info.st_ino!=context->log.st_ino||
@@ -1061,6 +1074,7 @@ static int capture_sdk_log(int retained,const char *base,unsigned role,const str
     int output=open(path,O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600),failed=output<0;
     char buffer[4096];*bytes=0;
     while(!failed&&*bytes<65536){ssize_t size=read(input,buffer,sizeof(buffer));if(size<0){failed=1;break;}if(!size)break;
+        if(mixer)(void)mixer_audit_feed(mixer,buffer,(size_t)size);
         if(store_write_all(output,buffer,(size_t)size)){failed=1;break;}*bytes+=(unsigned)size;}
     *truncated=info.st_size>(off_t)*bytes;close(input);if(output>=0&&close(output))failed=1;return failed?-1:0;
 }
@@ -1092,7 +1106,7 @@ static int run_sdk(const char *base,const char *root,const char *own,const char 
         if(second>=3)snprintf(fd_text,sizeof(fd_text),"%d,%d",channel,second);else snprintf(fd_text,sizeof(fd_text),"%d",channel);
         snprintf(parent_text,sizeof(parent_text),"%ld",(long)parent);
         if(setrlimit(RLIMIT_NOFILE,&files)||fcntl(channel,F_SETFD,0)||(second>=3&&(fcntl(second,F_SETFD,0)||!unix_byte_channel_valid(second,parent)))||setenv("LISA_BYTE_FDS",fd_text,1)||
-            setenv("LD_PRELOAD","/opt/lisa/client.so",1)||setenv("LD_BIND_NOW","1",1)||setenv("LISA_BYTE_DIAGNOSTIC","1",1)||
+            (sdk_mixer&&setenv("LISA_MIXER_AUDIT","1",1))||setenv("LD_PRELOAD","/opt/lisa/client.so",1)||setenv("LD_BIND_NOW","1",1)||setenv("LISA_BYTE_DIAGNOSTIC","1",1)||
             setenv("LD_LIBRARY_PATH","/system/vendor/quasar/libs",1)||setenv("GST_PLUGIN_PATH","/system/vendor/quasar/libs",1)||
             setenv("CA_CERTIFICATES","/system/vendor/quasar/ca-certificates.crt",1)||setenv("PWD",".",1)||setenv("MALLOC_ARENA_MAX","2",1))_exit(83);
         int log=open("/data/quasar/diagnostic.stderr",O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);
@@ -1100,7 +1114,7 @@ static int run_sdk(const char *base,const char *root,const char *own,const char 
         if(ptrace(PTRACE_TRACEME,0,NULL,NULL)||vendor_identity_prepare(57342)||platform_sdk_guard(parent)||unix_byte_channel_guard(channel,parent))_exit(85);
         if(raise(SIGSTOP))_exit(86);
         if(role)execl("/system/vendor/quasar/maind","maind","--platformd",(char *)NULL);
-        else if(provider)execl("/system/vendor/quasar/maind","sdk-bus-control",sdk_owner?"--sdk-owner-control":sdk_errors?"--sdk-error-control":sdk_dual?"--sdk-two-control":sdk_bluez==2?"--sdk-adapter-control":"--sdk-bluez-control",primary_text,parent_text,provider->name,(char *)NULL);
+        else if(provider)execl("/system/vendor/quasar/maind","sdk-bus-control",sdk_mixer?"--sdk-mixer-control":sdk_owner?"--sdk-owner-control":sdk_errors?"--sdk-error-control":sdk_dual?"--sdk-two-control":sdk_bluez==2?"--sdk-adapter-control":"--sdk-bluez-control",primary_text,parent_text,provider->name,(char *)NULL);
         else execl("/system/vendor/quasar/maind","sdk-bus-control","--sdk-control",fd_text,parent_text,(char *)NULL);
         _exit(87);
     }
@@ -1126,19 +1140,25 @@ static int run_sdk(const char *base,const char *root,const char *own,const char 
     struct observed result={0};int retained=-1;
     int traced=sdk_trace_worker(child,role?"/system/vendor/quasar/maind":own,&retained,&result,paths,sdk_bus_view,&context,1,sdk_binding_mapped,sdk_observer_received,provider?sdk_provider_idle:NULL);
     if(close(paths))good=0;
-    unsigned log_bytes=0,objects=0;int truncated=0;
+    unsigned log_bytes=0,objects=0;int truncated=0;struct mixer_attach_audit mixer={0};
     const char *names[]={"own-bus-gate-proof","soundLogStorageDir","soundLogStorage.dat","data/local_events.lmdb","data/capability_states.lmdb","session_storage.dat"};
     if(retained>=0){
         for(unsigned i=0;i<sizeof(names)/sizeof(names[0]);++i){struct stat info;
             if(!fstatat(retained,names[i],&info,AT_SYMLINK_NOFOLLOW)){if(info.st_dev!=data.st_dev)good=0;else objects|=1u<<i;}
             else if(errno!=ENOENT)good=0;}
-        if(capture_sdk_log(retained,base,role,&context,&log_bytes,&truncated))good=0;
+        if(capture_sdk_log(retained,base,role,&context,&log_bytes,&truncated,sdk_mixer?&mixer:NULL))good=0;
         close(retained);
     }else good=0;
     good=good&&!traced&&result.verified&&result.drained&&result.binding_seen;
     if(!role&&(!WIFSIGNALED(result.status)||WTERMSIG(result.status)!=SIGABRT||result.threads!=9||!(objects&1)||!result.path_control))good=0;
     if(rmdir(sdk_root)||rmdir(stage))good=0;
-    char admission[96]={0};if(sdk_dual)snprintf(admission,sizeof(admission),",\"source_channels\":2,\"source_admission_checks\":%u",admission_checks);
+    int mixer_valid=!truncated&&!mixer_audit_finish(&mixer),mixer_fixture=!role&&mixer.count==1&&
+        !strcmp(mixer.record[0].label,MIXER_MISSING_CONTROL)&&mixer.record[0].result<0;
+    if(sdk_mixer&&(!mixer_valid||(!role&&!mixer_fixture)))good=0;
+    char admission[256]={0};int length=0;
+    if(sdk_dual)length=snprintf(admission,sizeof(admission),",\"source_channels\":2,\"source_admission_checks\":%u",admission_checks);
+    if(sdk_mixer&&length>0&&length<(int)sizeof(admission))snprintf(admission+length,sizeof(admission)-(size_t)length,
+        ",\"mixer_records\":%u,\"mixer_metadata_valid\":%s,\"mixer_fixture_match\":%s",mixer.count,mixer_valid?"true":"false",mixer_fixture?"true":"false");
     printf("{\"event\":\"sdk-bus-diagnostic\",\"role\":\"%s\",\"boundary_ok\":%s,\"exec_verified\":%s,\"binding_mapped\":%s,\"drained\":%s,\"threads\":%u,\"syscalls\":%u,\"denied\":%u,\"socket_attempts\":%u,\"lost_registers\":%u,\"bounded_stop\":%s,\"exit_code\":%d,\"exit_signal\":%d,\"private_objects_mask\":%u,\"path_control\":%s,\"private_stderr_bytes\":%u,\"private_stderr_truncated\":%s,\"synthetic_identity\":true,\"audio_opened\":false,\"functionality_verified\":false%s}\n",
         role?"platform":"own-elf",good?"true":"false",result.verified?"true":"false",result.binding_seen?"true":"false",result.drained?"true":"false",result.threads,result.entries,result.denied,result.sockets,result.lost_registers,result.bounded?"true":"false",
         WIFEXITED(result.status)?WEXITSTATUS(result.status):-1,WIFSIGNALED(result.status)?WTERMSIG(result.status):0,objects,result.path_control?"true":"false",log_bytes,truncated?"true":"false",admission);fflush(stdout);
@@ -1378,12 +1398,12 @@ static int coordinator(const char *base,const char *executable,const char *bindi
 }
 int main(int argc,char **argv){
     if(argc==2&&!strcmp(argv[1],"--actor"))return own_actor();
-    if((argc==4&&!strcmp(argv[1],"--sdk-control"))||(argc==5&&(!strcmp(argv[1],"--sdk-bluez-control")||!strcmp(argv[1],"--sdk-adapter-control")||!strcmp(argv[1],"--sdk-two-control")||!strcmp(argv[1],"--sdk-error-control")||!strcmp(argv[1],"--sdk-owner-control")))){
+    if((argc==4&&!strcmp(argv[1],"--sdk-control"))||(argc==5&&(!strcmp(argv[1],"--sdk-bluez-control")||!strcmp(argv[1],"--sdk-adapter-control")||!strcmp(argv[1],"--sdk-two-control")||!strcmp(argv[1],"--sdk-error-control")||!strcmp(argv[1],"--sdk-owner-control")||!strcmp(argv[1],"--sdk-mixer-control")))){
         long values[2];for(unsigned i=0;i<2;++i){char *end;values[i]=strtol(argv[i+2],&end,10);if(*end||values[i]<3||values[i]>INT_MAX)return 2;}
         if(getppid()!=values[1])return 2;
         if(argc==5&&!empty_objects_name_size(argv[4]))return 2;
-        int errors=!strcmp(argv[1],"--sdk-error-control"),owner=!strcmp(argv[1],"--sdk-owner-control"),dual=owner||errors||!strcmp(argv[1],"--sdk-two-control");
-        return sdk_bus_control((int)values[0],(pid_t)values[1],argc==5?argv[4]:NULL,dual||!strcmp(argv[1],"--sdk-adapter-control"),dual,errors,owner);
+        int mixer=!strcmp(argv[1],"--sdk-mixer-control"),errors=!strcmp(argv[1],"--sdk-error-control"),owner=mixer||!strcmp(argv[1],"--sdk-owner-control"),dual=owner||errors||!strcmp(argv[1],"--sdk-two-control");
+        return sdk_bus_control((int)values[0],(pid_t)values[1],argc==5?argv[4]:NULL,dual||!strcmp(argv[1],"--sdk-adapter-control"),dual,errors,owner,mixer);
     }
     if(argc==7&&!strcmp(argv[1],"--client-actor")){
         long values[5];for(unsigned i=0;i<5;++i){char *end;values[i]=strtol(argv[i+2],&end,10);if(*end||values[i]<(i==4?1:3)||values[i]>INT_MAX)return 2;}
@@ -1395,8 +1415,8 @@ int main(int argc,char **argv){
         if(values[0]==values[1]||values[0]==values[2]||values[1]==values[2]||getppid()!=values[3])return 2;
         return relay_actor((int)values[0],(int)values[1],(int)values[2],(pid_t)values[3]);
     }
-    if(argc!=5||(strcmp(argv[1],"--run")&&strcmp(argv[1],"--run-sdk")&&strcmp(argv[1],"--run-sdk-bluez")&&strcmp(argv[1],"--run-sdk-adapter")&&strcmp(argv[1],"--run-sdk-two")&&strcmp(argv[1],"--run-sdk-error-audit")&&strcmp(argv[1],"--run-sdk-owner"))||getuid()||geteuid()||getgid()||getegid())return 2;
-    sdk_owner=!strcmp(argv[1],"--run-sdk-owner");sdk_errors=!strcmp(argv[1],"--run-sdk-error-audit");sdk_dual=sdk_owner||sdk_errors||!strcmp(argv[1],"--run-sdk-two");sdk_bluez=(sdk_dual||!strcmp(argv[1],"--run-sdk-adapter"))?2:!strcmp(argv[1],"--run-sdk-bluez");int sdk=sdk_bluez||!strcmp(argv[1],"--run-sdk");
+    if(argc!=5||(strcmp(argv[1],"--run")&&strcmp(argv[1],"--run-sdk")&&strcmp(argv[1],"--run-sdk-bluez")&&strcmp(argv[1],"--run-sdk-adapter")&&strcmp(argv[1],"--run-sdk-two")&&strcmp(argv[1],"--run-sdk-error-audit")&&strcmp(argv[1],"--run-sdk-owner")&&strcmp(argv[1],"--run-sdk-mixer-audit"))||getuid()||geteuid()||getgid()||getegid())return 2;
+    sdk_mixer=!strcmp(argv[1],"--run-sdk-mixer-audit");sdk_owner=sdk_mixer||!strcmp(argv[1],"--run-sdk-owner");sdk_errors=!strcmp(argv[1],"--run-sdk-error-audit");sdk_dual=sdk_owner||sdk_errors||!strcmp(argv[1],"--run-sdk-two");sdk_bluez=(sdk_dual||!strcmp(argv[1],"--run-sdk-adapter"))?2:!strcmp(argv[1],"--run-sdk-bluez");int sdk=sdk_bluez||!strcmp(argv[1],"--run-sdk");
     if(sdk){
         char pattern[1024];int fd=open("/proc/sys/kernel/core_pattern",O_RDONLY|O_NOFOLLOW|O_CLOEXEC);if(fd<0)return 2;
         ssize_t count=read(fd,pattern,sizeof(pattern));int closed=close(fd);

@@ -60,6 +60,7 @@ jobs:
       - run: python controller/build.py --target platform-sdk-probe
       - run: python controller/build.py --target unix-channel-probe
       - run: python controller/build.py --target unix-bus-factory
+      - run: python controller/build.py --target unix-mixer-factory
       - run: python controller/build.py --target private-bus-probe
       - run: python controller/build.py --target bus-auth-probe
       - run: python controller/build.py --target bus-relay-probe
@@ -133,6 +134,11 @@ jobs:
             ./build/driver-error-host --selftest
             cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/service_owner_probe.c -o build/service-owner-host
             ./build/service-owner-host --selftest
+            cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/mixer_record_probe.c -o build/mixer-record-host
+            ./build/mixer-record-host --selftest
+            cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror -shared -fPIC controller/mixer_abi_fixture.c -o build/libmixer-abi-fixture.so
+            cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/mixer_hook_probe.c -pthread -ldl -Lbuild -l:libmixer-abi-fixture.so -o build/mixer-hook-host
+            LD_LIBRARY_PATH=build ./build/mixer-hook-host --selftest
           cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/bus_relay_probe.c -o build/bus-relay-host
           ./build/bus-relay-host --selftest
           cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror -shared -fPIC controller/private_bus_factory.c -o build/private-bus-factory-host.so
@@ -325,5 +331,6 @@ jobs:
             build/private-bus-probe.armhf
             build/private-bus-factory.so
             build/private-bus-error-factory.so
+            build/unix-mixer-factory.so
             build/bus-auth-probe.armhf
             build/bus-relay-probe.armhf

@@ -163,6 +163,9 @@ The separate [exact SDK service profile](docs/EXACT_SDK_SERVICE.md) now verifies
 real registration and retirement of that reviewed name. The next dependency
 is the absent hardware mixer; permanent switching remains unfinished.
 
+The [private mixer API audit](docs/SDK_MIXER_AUDIT.md) now identifies that
+dependency without adding hardware permissions or replacing its real result.
+
 The [explicit two-channel SDK diagnostic](docs/DUAL_SDK_CHANNELS.md) now composes
 those ownership and retirement checks. Both SDK connections authenticate and
 close through separate relays; the next denied dependency is service-name

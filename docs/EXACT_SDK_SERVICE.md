@@ -61,5 +61,7 @@ The pure owner fixture passes **45 checks** on Windows/Zig, fortified GCC and
 ASan/UBSan. Ruff and **1741 Python/HA tests** pass; CI includes the owner host
 fixture and retains the 46-target native matrix. The next step is read-only
 analysis of the mixer's required control interface, without granting arbitrary
-ALSA access or pretending a missing hardware operation succeeded. Permanent
+ALSA access or pretending a missing hardware operation succeeded. The subsequent
+[API metadata audit](SDK_MIXER_AUDIT.md) now identifies `default` and the real
+negative attach result while retaining the hardware denial. Permanent
 switching, full service compatibility and the rest of the roadmap remain open.
