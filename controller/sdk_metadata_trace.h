@@ -76,13 +76,17 @@ static pid_t sdk_trace_wait(struct task *tasks,unsigned count,int *status,int fa
 }
 static int sdk_trace_worker(pid_t child,const char *expected,int *retained,struct observed *result,int paths,
     int (*view)(pid_t,struct stat *,void *),void *context,int family_only,int (*binding)(pid_t,void *),
-    int (*received)(pid_t,unsigned,int32_t,void *)){
+    int (*received)(pid_t,unsigned,int32_t,void *),int (*idle)(pid_t,void *)){
     unsigned path_bytes=0;struct task tasks[80]={{.tid=child,.active=1,.entering=1}};unsigned count=1,live=1,stops=0;
     uint64_t deadline=now_ms()+6000;int killing=0,failed=0,leader_owned=1;
     #define TRACE_FAIL() do{if(!failed)fprintf(stderr,"sdk trace stage %d errno %d\n",__LINE__,errno);failed=1;}while(0)
     while(live){
         if((now_ms()>deadline||stops>20000)&&!killing){result->bounded=1;if(leader_owned)kill(child,SIGKILL);killing=1;deadline=now_ms()+3000;}
         if(killing&&now_ms()>deadline){TRACE_FAIL();break;}
+        /* Optional OWN provider pump. Never consumes a wait status or SDK buffer. */
+        if(!killing&&!failed&&result->verified&&idle&&idle(child,context)<0){
+            TRACE_FAIL();if(leader_owned)kill(child,SIGKILL);killing=1;deadline=now_ms()+3000;
+        }
         int status=0;pid_t tid=sdk_trace_wait(tasks,count,&status,family_only);
         if(tid==0){struct timespec pause={0,100000};nanosleep(&pause,NULL);continue;}
         if(tid<0){if(errno==EINTR)continue;if(errno==ECHILD&&killing){live=0;break;}TRACE_FAIL();break;}

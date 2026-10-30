@@ -3,8 +3,10 @@
 The next audio-free service diagnostic needs to distinguish a valid empty object
 tree from an absent service. `private_empty_objects.h` now qualifies the pure
 request/reply codec for that experiment. **No service is installed or enabled by
-this component.** The actual SDK diagnostic still stops because org.bluez is
-absent; its next method has not yet been observed at runtime.
+this component.** The baseline SDK diagnostic still stops because org.bluez is
+absent. A separate [explicit service trial](PRIVATE_EMPTY_SERVICE.md) now uses the
+codec, confirms an actual GetManagedObjects call, and reaches the missing
+Adapter1 dependency.
 
 The [ObjectManager specification](https://dbus.freedesktop.org/doc/dbus-specification.html#standard-interfaces-objectmanager)
 defines GetManagedObjects without input arguments and with result signature
@@ -47,8 +49,8 @@ runs both host checks; the fixture also compiles for ARM. Ruff/public-source
 validation and the existing 1520 Python/HA tests pass. The 45-target device build
 matrix is unchanged, and no unchanged speaker trial was repeated.
 
-The service owner, narrowly scoped lab policy, bounded parent event pump,
-independent own-client service exchange and actual SDK composition are still
-required before this codec can be used in a live service diagnostic. Permanent
+The separate service diagnostic now composes ownership, narrow lab policy, a
+bounded parent pump and own-client/SDK exchange. This pure codec itself remains
+independent of runtime I/O and grants no permissions. Permanent
 mode switching, cloud-Alice policy and the remaining voice/HA roadmap remain
 unfinished.

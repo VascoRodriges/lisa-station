@@ -262,5 +262,12 @@ scope remains unfinished.
 The next service audit now has a qualified
 [fixed-schema empty ObjectManager codec](PRIVATE_EMPTY_OBJECTS.md): bounded
 zero-argument request validation and an independently parsed empty-tree reply.
-It has no bus/service/device I/O and grants no runtime rights. A private owner,
-bounded parent pump and live own-client/SDK composition remain required.
+It has no bus/service/device I/O and grants no runtime rights. Runtime service
+ownership, the parent pump and live composition are separate components.
+
+The [explicit empty-service diagnostic](PRIVATE_EMPTY_SERVICE.md) now supplies
+that parent-owned service in a separate opt-in profile. The own client and SDK
+complete the exact zero-argument request; provider/SDK state is absent after
+teardown. The actual SDK next requires a default Adapter1 object. This exposes
+no Bluetooth hardware and does not complete service compatibility, permanent
+switching or any production phase above.

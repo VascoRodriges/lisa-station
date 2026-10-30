@@ -143,3 +143,67 @@ def test_watchdog_covers_new_sdk_owned_leaders_and_empty_underlays():
     assert script.count("sdk-stage") == 4
     assert '"event":"sdk-bus-state"' in script
     assert "rm -r" not in script
+
+
+def bluez_evidence():
+    rows = evidence()
+    for index, role in [(2, "own-elf"), (6, "platform")]:
+        rows.insert(index, dict(event="sdk-empty-provider", role=role, primary_owner=True,
+                                calls=1, closed=True, empty_tree_only=True, hardware_opened=False))
+    rows[8]["checks"] = 29
+    return rows
+
+
+def test_explicit_empty_service_requires_its_own_complete_protocol():
+    assert evaluate_events(bluez_evidence(), empty_bluez=True)
+    assert not evaluate_events(bluez_evidence())
+    assert not evaluate_events(evidence(), empty_bluez=True)
+    script = diagnostic_script(empty_bluez=True)
+    assert "PROBE --run-sdk-bluez " in script and "PROBE --run-sdk " not in script
+    assert "PROBE --run-sdk-bluez " not in diagnostic_script()
+
+
+@pytest.mark.parametrize("index", range(13))
+def test_empty_service_requires_all_ordered_unique_typed_events(index):
+    rows = bluez_evidence()
+    del rows[index]
+    assert not evaluate_events(rows, empty_bluez=True)
+    rows = bluez_evidence()
+    rows.insert(index, deepcopy(rows[index]))
+    assert not evaluate_events(rows, empty_bluez=True)
+    rows = bluez_evidence()
+    rows[index]["unexpected"] = True
+    assert not evaluate_events(rows, empty_bluez=True)
+    rows = bluez_evidence()
+    rows[index] = None
+    assert not evaluate_events(rows, empty_bluez=True)
+
+
+@pytest.mark.parametrize("index", [2, 6])
+@pytest.mark.parametrize("key,value", [
+    ("primary_owner", False), ("primary_owner", 1), ("closed", False), ("closed", 1),
+    ("empty_tree_only", False), ("hardware_opened", True), ("hardware_opened", 0),
+    ("calls", 0), ("calls", 5), ("calls", True), ("calls", "1"),
+    ("role", "unknown"),
+])
+def test_empty_service_rejects_missing_ownership_exchange_or_teardown(index, key, value):
+    rows = bluez_evidence()
+    rows[index][key] = value
+    assert not evaluate_events(rows, empty_bluez=True)
+
+
+@pytest.mark.parametrize("count", [2, 3, 4])
+def test_own_empty_service_requires_exactly_one_verified_call(count):
+    rows = bluez_evidence()
+    rows[2]["calls"] = count
+    assert not evaluate_events(rows, empty_bluez=True)
+    rows = bluez_evidence()
+    rows[6]["calls"] = count
+    assert evaluate_events(rows, empty_bluez=True)
+
+
+@pytest.mark.parametrize("count", [26, 28, 30, True, "29"])
+def test_empty_service_requires_additional_schema_denial_controls(count):
+    rows = bluez_evidence()
+    rows[8]["checks"] = count
+    assert not evaluate_events(rows, empty_bluez=True)

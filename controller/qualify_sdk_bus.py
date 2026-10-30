@@ -15,8 +15,9 @@ from controller.qualify_private_bus import SCRIPT as BUS_SCRIPT
 from controller.qualify_socket_close import rules_only
 
 
-def diagnostic_script():
-    script = BUS_SCRIPT.replace("PROBE --run ", "PROBE --run-sdk ")
+def diagnostic_script(*, empty_bluez=False):
+    mode = "--run-sdk-bluez" if empty_bluez else "--run-sdk"
+    script = BUS_SCRIPT.replace("PROBE --run ", f"PROBE {mode} ")
     # The same owned-PID watchdog also watches the SDK family leader. Its
     # descendants inherit PDEATH/ptrace EXITKILL; no stock process is targeted.
     script = script.replace(
@@ -42,8 +43,25 @@ def diagnostic_script():
     )
 
 
-def evaluate_events(events):
+def evaluate_events(events, *, empty_bluez=False):
     """Require SDK boundary, real EXTERNAL authentication and complete teardown."""
+    if empty_bluez:
+        if type(events) is not list or len(events) != 13 or any(type(e) is not dict for e in events):
+            return False
+        for index, role in [(2, "own-elf"), (6, "platform")]:
+            event = events[index]
+            required = dict(event="sdk-empty-provider", role=role, primary_owner=True,
+                            closed=True, empty_tree_only=True, hardware_opened=False)
+            if (set(event) != set(required) | {"calls"}
+                or any(type(event.get(k)) is not type(v) or event[k] != v for k, v in required.items())
+                or type(event.get("calls")) is not int or not 1 <= event["calls"] <= 4
+                or (role == "own-elf" and event["calls"] != 1)):
+                return False
+        if type(events[8].get("checks")) is not int or events[8]["checks"] != 29:
+            return False
+        normalized = [events[0], events[1], events[3], events[4], events[5], events[7],
+                      dict(events[8], checks=26), *events[9:]]
+        return evaluate_events(normalized)
     if type(events) is not list or len(events) != 11 or any(type(e) is not dict for e in events):
         return False
     for i, role in [(0, "own-elf"), (3, "platform")]:
@@ -117,6 +135,7 @@ def main():
     parser.add_argument("host")
     parser.add_argument("--ssh-config", type=Path)
     parser.add_argument("--run-sdk-bus-diagnostic", action="store_true", required=True)
+    parser.add_argument("--empty-bluez", action="store_true", help="Explicit empty ObjectManager lab; no Bluetooth hardware")
     args = parser.parse_args()
     if args.host.startswith("-"):
         parser.error("SSH alias required")
@@ -148,42 +167,44 @@ def main():
     identity = "pidof dbus-daemon quasar_launcher2 maind alsa-audio-monitord hardvold chronyd unbound; cat /proc/sys/kernel/random/boot_id; sha256sum /etc/init.d/rcS /etc/init.d/S99zdropbear /etc/chrony.conf /etc/unbound/unbound.conf /etc/resolv.conf"
     before = remote(identity, check=True).stdout
     firewall = remote("iptables-save; ip6tables-save", check=True).stdout
-    script = diagnostic_script().replace("PROBE", resolved[0]).replace("FACTORY", resolved[1]).replace("CLIENT_LIBRARY", resolved[2])
+    script = diagnostic_script(empty_bluez=args.empty_bluez).replace("PROBE", resolved[0]).replace("FACTORY", resolved[1]).replace("CLIENT_LIBRARY", resolved[2])
     result = remote("sh -s", input=script.encode())
     after = remote(identity, check=True).stdout
     after_firewall = remote("iptables-save; ip6tables-save", check=True).stdout
-    (root / "build/sdk-bus.stdout.private.txt").write_bytes(result.stdout)
-    (root / "build/sdk-bus.stderr.private.txt").write_bytes(result.stderr)
+    report_name = "sdk-bluez-bus" if args.empty_bluez else "sdk-bus"
+    (root / f"build/{report_name}.stdout.private.txt").write_bytes(result.stdout)
+    (root / f"build/{report_name}.stderr.private.txt").write_bytes(result.stderr)
     events = [json.loads(line) for line in result.stdout.decode().splitlines()]
     state = None
     if events and events[0].get("event") == "sdk-bus-state":
         state = events.pop(0).get("path")
     prefix = "/bkupgrade/data/opt/lisa-controller-lab/private-bus."
     if isinstance(state, str) and state.startswith(prefix) and 6 <= len(state[len(prefix):]) <= 16 and state[len(prefix):].isascii() and state[len(prefix):].isalnum():
-        (root / "build/sdk-bus-state.private.txt").write_text(state + "\n", encoding="utf-8")
+        (root / f"build/{report_name}-state.private.txt").write_text(state + "\n", encoding="utf-8")
         for role in range(2):
             for suffix in ["stderr", "paths", "bus-stderr", "match"]:
                 name = f"sdk{role}-{suffix}.private.txt"
+                local_name = "bluez-" + name if args.empty_bluez else name
                 saved = remote("test ! -L " + state + "/" + name + " && head -c 65536 " + state + "/" + name)
                 if saved.returncode == 0:
-                    (root / "build" / name).write_bytes(saved.stdout)
+                    (root / "build" / local_name).write_bytes(saved.stdout)
                 else:
                     # An early control failure must not leave a prior SDK
                     # run's private log looking like current evidence.
-                    (root / "build" / name).unlink(missing_ok=True)
+                    (root / "build" / local_name).unlink(missing_ok=True)
     else:
         raise RuntimeError("missing canonical private SDK evidence location")
     report = dict(
         binary_sha256=digests[0], binding_sha256=digests[1], client_binding_sha256=digests[2],
         returncode=result.returncode, events=events,
-        qualified=result.returncode == 0 and evaluate_events(events),
+        qualified=result.returncode == 0 and evaluate_events(events, empty_bluez=args.empty_bluez),
         stock_identity_and_configs_preserved=before == after,
         firewall_unchanged=rules_only(firewall) == rules_only(after_firewall),
-        audio_captured=False, sdk_executed=any(e.get("role") == "platform" for e in events),
+        audio_captured=False, sdk_executed=any(e.get("event") == "sdk-bus-diagnostic" and e.get("role") == "platform" and e.get("exec_verified") is True for e in events),
         host_bus_forwarded=False, production_mode_changed=False,
         isolation_verified=False, functionality_verified=False,
     )
-    (root / "build/sdk-bus-qualification.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    (root / f"build/{report_name}-qualification.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report, indent=2))
     if not report["qualified"] or not report["stock_identity_and_configs_preserved"] or not report["firewall_unchanged"]:
         raise SystemExit("SDK bus diagnostic incomplete; inspect private evidence")

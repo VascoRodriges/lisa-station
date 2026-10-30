@@ -134,6 +134,11 @@ A [fixed-schema empty ObjectManager codec](docs/PRIVATE_EMPTY_OBJECTS.md) now
 passes synthetic and independent libdbus validation for the next service audit.
 It does not enable Bluetooth or change the current SDK/service permissions.
 
+The [explicit empty-service lab](docs/PRIVATE_EMPTY_SERVICE.md) now completes an
+actual SDK ObjectManager request, with separate provider/observer ownership and
+verified teardown. The SDK then requires a default Bluetooth adapter object;
+real hardware, permanent mode switching and usable SDK functionality remain pending.
+
 ## Development
 
 Use Python 3.14 on Linux in an isolated virtual environment:
