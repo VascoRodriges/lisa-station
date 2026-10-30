@@ -62,6 +62,7 @@ jobs:
       - run: python controller/build.py --target unix-bus-factory
       - run: python controller/build.py --target private-bus-probe
       - run: python controller/build.py --target bus-auth-probe
+      - run: python controller/build.py --target bus-relay-probe
       - run: python controller/build.py --target private-bus-factory
       - run: python controller/build.py --target station-init
       - run: python controller/build.py --target boot-runner-probe
@@ -115,6 +116,8 @@ jobs:
           cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror -pthread -shared -fPIC controller/unix_bus_factory.c -o build/unix-bus-factory-host.so
           cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/bus_auth_probe.c -o build/bus-auth-host
           ./build/bus-auth-host --selftest
+          cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror controller/bus_relay_probe.c -o build/bus-relay-host
+          ./build/bus-relay-host --selftest
           cc -O2 -D_FORTIFY_SOURCE=3 -fstack-protector-strong -Wall -Wextra -Werror -shared -fPIC controller/private_bus_factory.c -o build/private-bus-factory-host.so
           chmod 700 build/unix-bus-factory-host.so
           (ulimit -s 32768; ./build/unix-channel-host --factory-selftest ./build/unix-bus-factory-host.so)
@@ -305,3 +308,4 @@ jobs:
             build/private-bus-probe.armhf
             build/private-bus-factory.so
             build/bus-auth-probe.armhf
+            build/bus-relay-probe.armhf

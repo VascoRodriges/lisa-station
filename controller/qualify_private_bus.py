@@ -26,7 +26,7 @@ remaining() {
     for entry in /proc/[0-9]*/exe; do
         [ "$(readlink "$entry" 2>/dev/null || true)" != PROBE ] || return 1
     done
-    for stamp in "$STATE"/root[012].child; do
+    for stamp in "$STATE"/root[012].child "$STATE"/root[012]-relay.child; do
         [ -f "$stamp" ] || continue
         set -- $(cat "$stamp"); pid=$1; ticks=$2
         if [ "$(awk '{print $22}' /proc/"$pid"/stat 2>/dev/null || true)" = "$ticks" ]; then
@@ -52,6 +52,8 @@ cleanup() {
     for epoch in 0 1 2; do
         [ ! -d "$STATE/root$epoch" ] || rmdir "$STATE/root$epoch"
         [ ! -f "$STATE/root$epoch.child" ] || rm "$STATE/root$epoch.child"
+        [ ! -d "$STATE/root$epoch-relay" ] || rmdir "$STATE/root$epoch-relay"
+        [ ! -f "$STATE/root$epoch-relay.child" ] || rm "$STATE/root$epoch-relay.child"
         [ ! -e "$STATE/listener$epoch" ] || { [ -S "$STATE/listener$epoch" ] && rm "$STATE/listener$epoch"; }
     done
     touch "$STATE/cleaned"
@@ -74,7 +76,7 @@ nohup sh -c '
     for entry in /proc/[0-9]*/exe; do
         [ "$(readlink "$entry" 2>/dev/null || true)" != PROBE ] || exit 9
     done
-    for stamp in "$state"/root[012].child; do
+    for stamp in "$state"/root[012].child "$state"/root[012]-relay.child; do
         [ -f "$stamp" ] || continue
         set -- $(cat "$stamp"); pid=$1; ticks=$2
         if [ "$(awk "{print \$22}" /proc/"$pid"/stat 2>/dev/null || true)" = "$ticks" ]; then
@@ -85,6 +87,8 @@ nohup sh -c '
     for epoch in 0 1 2; do
         [ ! -d "$state/root$epoch" ] || rmdir "$state/root$epoch"
         [ ! -f "$state/root$epoch.child" ] || rm "$state/root$epoch.child"
+        [ ! -d "$state/root$epoch-relay" ] || rmdir "$state/root$epoch-relay"
+        [ ! -f "$state/root$epoch-relay.child" ] || rm "$state/root$epoch-relay.child"
         [ ! -e "$state/listener$epoch" ] || { [ -S "$state/listener$epoch" ] && rm "$state/listener$epoch"; }
     done
     touch "$state/cleaned"
@@ -104,22 +108,34 @@ echo '{"event":"private-bus-cleanup","ok":true}'
 def evaluate_events(events):
     """Require the complete ordered boundary evidence, without claiming SDK readiness."""
     expected = [dict(event="private-bus-control", checks=15, failures=0)]
-    expected += [
-        dict(
-            event="private-bus-epoch",
-            epoch=i,
-            checks=count,
-            failures=0,
-            actual_daemon=i > 0,
-            fd_negotiation_disabled=False,
-            auth_gate_verified=i > 0,
+    for i, count in enumerate([7, 32, 56]):
+        if i:
+            expected.append(
+                dict(
+                    event="private-bus-relay",
+                    epoch=i,
+                    actor_checks=11,
+                    failures=0,
+                    result=0,
+                    origin=1 if i == 1 else 0,
+                    bounded=True,
+                )
+            )
+        expected.append(
+            dict(
+                event="private-bus-epoch",
+                epoch=i,
+                checks=count,
+                failures=0,
+                actual_daemon=i > 0,
+                fd_negotiation_disabled=False,
+                auth_gate_verified=i > 0,
+            )
         )
-        for i, count in enumerate([7, 28, 49])
-    ]
     expected += [
         dict(
             selftest="private-bus",
-            checks=50,
+            checks=57,
             failures=0,
             ok=True,
             sdk_executed=False,

@@ -6,8 +6,9 @@ with ERROR locally and forwards BEGIN once. It then passes opaque binary bytes.
 It creates no sockets, fabricates no OS credentials and changes no kernel policy.
 Endpoint/peer admission and ancillary syscall denial remain independent.
 
-The gate is qualified as a component with an own in-memory client and a real
-private daemon. It is not an installed relay process or an SDK connection.
+The gate is qualified with a real private daemon through the
+[bounded relay actor](BUS_BYTE_RELAY.md). It is not a permanent service or an SDK
+connection.
 
 ## Contract
 
@@ -46,24 +47,23 @@ tails, discovery/challenge, malformed replies/identities/commands, deadline and
 clock reversal, overlong input, invalid API arguments and transactional output
 backpressure. It verifies pending storage clearing after failure/close.
 
-The updated [private-bus diagnostic](PRIVATE_BUS_DIAGNOSTIC.md) also passed its
-**70 speaker checks** in two daemon epochs. Its own in-memory client submits a
-pipelined request. The real daemon receives only NUL/AUTH, supplies OK, then
-receives only BEGIN; the client output contains that actual OK followed by the
-local ERROR. Hello/GetId still succeed and forbidden methods still fail. A second
-raw control connection still obtains AGREE_UNIX_FD from the unchanged daemon,
-showing why the gate is needed. No SDK, microphone, real account or host bus is
-connected. Stock configuration/firewall and unrelated network controls persist.
+The updated [private-bus diagnostic](PRIVATE_BUS_DIAGNOSTIC.md) passed **99 speaker
+checks** with two separate sealed relay actors. An own client pipelines a request
+on an actual socket and receives the daemon OK plus local negotiation ERROR.
+Hello/GetId and forbidden-method replies traverse the relay. A raw control
+connection still obtains AGREE_UNIX_FD from the unchanged daemon. Both EOF
+origins are checked, all owned actors reaped and references closed between epochs.
+No SDK, microphone, account or host bus is connected.
 
-Ruff, the public-source check and **1381 Python/HA tests** pass. CI builds 44 native
-targets and repeats the fortified host self-test. The ARM pure self-test artifact
-is built; the stated exhaustive split-test count is host evidence.
+Ruff, public-source validation and **1391 Python/HA tests** pass. CI builds 45
+native targets and repeats the fortified gate and relay self-tests. The exhaustive
+split-test count above is host evidence; the actual ARM relay uses the same gate.
 
 ## Next composition
 
-A bounded relay actor must compose this state with actual socket I/O, peer/FD
-ownership, lifecycle termination and queue revocation before SDK use. Its process
-parentage must preserve the client factory's cached parent-peer requirements.
+The separate relay actor now supplies bounded poll I/O and descriptor ownership
+for the diagnostic. SDK sibling/client-binding, full receiver/holder lifecycle
+and production supervision remain required before product use.
 Actual SDK authentication variants, service schemas, private client binding,
 identity/hardware/time compatibility and production boot/mode/voice integration
 remain unfinished. This component does not install permanent mode switching.

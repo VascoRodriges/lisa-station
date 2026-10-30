@@ -18,7 +18,7 @@
 #include "platform_storage.h"
 #include "platform_worker_guard.h"
 #include "loopback_socket.h"
-#include "bus_auth_gate.h"
+#include "bus_byte_relay.h"
 #ifndef __arm__
 #error This namespace diagnostic requires the reviewed ARM device ABI
 #endif
@@ -106,7 +106,7 @@ static int bus_guard(pid_t parent){
 #undef BUS_DENY
     struct sock_fprog program={sizeof(filter)/sizeof(filter[0]),filter};return prctl(PR_SET_SECCOMP,SECCOMP_MODE_FILTER,&program);
 }
-static int private_view(pid_t pid,int listener_fd,const int reload[2],int before_exec){
+static int private_view(pid_t pid,int listener_fd,const int reload[2],int before_exec,int relay){
     char path[PATH_MAX];struct stat a,b;struct statvfs fs;
     snprintf(path,sizeof(path),"/proc/%ld/ns/mnt",(long)pid);if(stat(path,&a)||stat("/proc/self/ns/mnt",&b)||a.st_ino==b.st_ino)return 0;
     snprintf(path,sizeof(path),"/proc/%ld/root",(long)pid);if(statvfs(path,&fs)||!(fs.f_flag&ST_RDONLY))return 0;
@@ -123,8 +123,8 @@ static int private_view(pid_t pid,int listener_fd,const int reload[2],int before
         snprintf(path,sizeof(path),"/proc/%ld/fd/%ld",(long)pid,number);
         if(number>2){
             int expected=(number==listener_fd)?listener_fd:(number==reload[0])?reload[0]:(number==reload[1])?reload[1]:-1;
-            if(expected<3||stat(path,&a)||fstat(expected,&b)||!S_ISSOCK(a.st_mode)||a.st_dev!=b.st_dev||a.st_ino!=b.st_ino){safe=0;break;}
-        }else if(stat(path,&a)||(!S_ISFIFO(a.st_mode)&&!S_ISCHR(a.st_mode))||(number==2&&!S_ISFIFO(a.st_mode))){safe=0;break;}++seen;
+            if(expected<3||stat(path,&a)||fstat(expected,&b)||(relay&&number==reload[1]?!S_ISFIFO(a.st_mode):!S_ISSOCK(a.st_mode))||a.st_dev!=b.st_dev||a.st_ino!=b.st_ino){safe=0;break;}
+        }else if(stat(path,&a)||(!S_ISFIFO(a.st_mode)&&!S_ISCHR(a.st_mode))||(number==2&&!(relay?S_ISCHR(a.st_mode):S_ISFIFO(a.st_mode)))){safe=0;break;}++seen;
     }closedir(fds);if(!safe||seen!=(listener_fd>=3?6u:3u))return 0;
     }
     snprintf(path,sizeof(path),"/proc/%ld/status",(long)pid);FILE *file=fopen(path,"r");if(!file)return 0;
@@ -168,27 +168,12 @@ static int auth(int fd,char guid[33]){
     for(unsigned i=3;i<35;++i)if(!((response[i]>='0'&&response[i]<='9')||(response[i]>='a'&&response[i]<='f')))return -1;
     memcpy(guid,response+3,32);guid[32]=0;return 0;
 }
-static int gated_auth(int fd,char guid[33]){
-    /* An own in-memory client intentionally pipelines negotiation and BEGIN.
-     * Only the real private daemon can supply OK; negotiation never reaches it.
-     * This verifies the state machine, not an installed relay actor. */
-    struct bus_auth_gate gate;uint64_t now=guardian_milliseconds();
+static int relay_auth(int fd,char guid[33]){
     static const char request[]="\0AUTH EXTERNAL 30\r\nNEGOTIATE_UNIX_FD\r\nBEGIN\r\n";
-    static const char initial[]="\0AUTH EXTERNAL 30\r\n";
-    if(bus_auth_init(&gate,now)!=BUS_OK||bus_auth_feed(&gate,BUS_CLIENT,request,sizeof(request)-1,now)!=BUS_OK||
-        gate.outgoing[BUS_BACKEND]!=sizeof(initial)-1||memcmp(gate.output[BUS_BACKEND],initial,sizeof(initial)-1))return -1;
-    if(store_write_all(fd,(const char *)gate.output[BUS_BACKEND],gate.outgoing[BUS_BACKEND])||
-        bus_auth_consume(&gate,BUS_BACKEND,gate.outgoing[BUS_BACKEND])!=BUS_OK)return -1;
-    char response[128];if(line(fd,response,sizeof(response))||!bus_auth_ok_line(response))return -1;
+    char response[128];
+    if(store_write_all(fd,request,sizeof(request)-1)||line(fd,response,sizeof(response))||!bus_auth_ok_line(response))return -1;
     memcpy(guid,response+3,32);guid[32]=0;
-    size_t size=strlen(response);memcpy(response+size,"\r\n",3);
-    if(bus_auth_feed(&gate,BUS_BACKEND,response,size+2,guardian_milliseconds())!=BUS_OK||gate.phase!=BUS_BINARY||!gate.negotiated||
-        gate.outgoing[BUS_BACKEND]!=7||memcmp(gate.output[BUS_BACKEND],"BEGIN\r\n",7))return -1;
-    static const char disabled[]="ERROR Unix FD passing disabled\r\n";
-    if(gate.outgoing[BUS_CLIENT]!=size+2+sizeof(disabled)-1||memcmp(gate.output[BUS_CLIENT],response,size+2)||
-        memcmp(gate.output[BUS_CLIENT]+size+2,disabled,sizeof(disabled)-1))return -1;
-    int result=store_write_all(fd,(const char *)gate.output[BUS_BACKEND],gate.outgoing[BUS_BACKEND]);
-    bus_auth_close(&gate);return result;
+    return line(fd,response,sizeof(response))||strcmp(response,"ERROR Unix FD passing disabled")?-1:0;
 }
 static uint32_t u32(const unsigned char *p){return (uint32_t)p[0]|(uint32_t)p[1]<<8|(uint32_t)p[2]<<16|(uint32_t)p[3]<<24;}
 static void put32(unsigned char *p,uint32_t value){for(unsigned i=0;i<4;++i)p[i]=(unsigned char)(value>>(8*i));}
@@ -232,6 +217,91 @@ static int connect_bus(const char *path){
     struct ucred peer;socklen_t length=sizeof(peer);
     if(getsockopt(fd,SOL_SOCKET,SO_PEERCRED,&peer,&length)||length!=sizeof(peer)||peer.pid!=getpid()||peer.uid){close(fd);return -1;}return fd;
 }
+struct relay_report {struct bus_relay_stats stats;unsigned checks,failures;};
+struct relay_handle {pid_t pid;int report;char root[PATH_MAX];};
+static int relay_actor(int client,int backend,int output,pid_t parent){
+    struct stat info;struct statvfs fs;char marker[32]={0};int fd=open("/etc/lisa-private-bus",O_RDONLY|O_CLOEXEC);
+    if(fd<0)return 9;ssize_t size=read(fd,marker,sizeof(marker));close(fd);int death=0;
+    if(size!=20||memcmp(marker,"LISA_PRIVATE_BUS_V1\n",20)||statvfs("/",&fs)||!(fs.f_flag&ST_RDONLY)||
+        prctl(PR_GET_PDEATHSIG,&death,0,0,0)||death!=SIGKILL||fstat(output,&info)||!S_ISFIFO(info.st_mode))return 9;
+    check(getppid()==parent&&prctl(PR_GET_NO_NEW_PRIVS,0,0,0,0)==1&&prctl(PR_GET_SECCOMP,0,0,0,0)==2);
+    check(unix_byte_channel_valid(client,parent)&&unix_byte_channel_valid(backend,parent));
+    errno=0;check(socket(AF_INET,SOCK_STREAM,0)<0&&errno==EPERM);
+    struct sockaddr_un address={.sun_family=AF_UNIX};strcpy(address.sun_path,"/var/run/dbus/system_bus_socket");
+    errno=0;check(connect(client,(struct sockaddr *)&address,sizeof(address))<0&&errno==EPERM);
+    struct msghdr message={0};errno=0;check(sendmsg(client,&message,0)<0&&errno==EPERM);
+    errno=0;check(recvmsg(client,&message,0)<0&&errno==EPERM);
+    errno=0;check(accept4(client,NULL,NULL,SOCK_CLOEXEC)<0&&errno==EPERM);
+    errno=0;check(fork()<0&&errno==EPERM);
+    errno=0;check(lstat("/data/quasar/account_storage.dat",&info)<0&&errno==ENOENT);
+    if(failures)return 9;
+    uint32_t ready=0x4c525931u;if(write(output,&ready,sizeof(ready))!=(ssize_t)sizeof(ready))return 9;
+    struct relay_report result={0};bus_relay_run(client,backend,parent,8000,&result.stats);
+    errno=0;check(fcntl(client,F_GETFD)<0&&errno==EBADF);errno=0;check(fcntl(backend,F_GETFD)<0&&errno==EBADF);
+    result.checks=checks;result.failures=failures;
+    return write(output,&result,sizeof(result))==(ssize_t)sizeof(result)&&!failures&&result.stats.result==RELAY_EOF?0:9;
+}
+/* Returns the OWN client endpoint. Consumes backend on every path. */
+static int start_relay(const char *root,const char *image,int backend,struct relay_handle *handle){
+    handle->pid=-1;handle->report=-1;int pair[2]={-1,-1},reports[2]={-1,-1},live=0;pid_t child=-1;
+    if(snprintf(handle->root,sizeof(handle->root),"%s-relay",root)>=(int)sizeof(handle->root)||mkdir(handle->root,0700)||
+        socketpair(AF_UNIX,SOCK_STREAM|SOCK_CLOEXEC,0,pair)||pipe2(reports,O_CLOEXEC))goto failed;
+    if(fcntl(pair[1],F_SETFL,fcntl(pair[1],F_GETFL)|O_NONBLOCK)||fcntl(backend,F_SETFL,fcntl(backend,F_GETFL)|O_NONBLOCK))goto failed;
+    pid_t parent=getpid();child=fork();if(child<0)goto failed;
+    if(!child){
+        if(prctl(PR_SET_PDEATHSIG,SIGKILL)||getppid()!=parent)_exit(80);
+        char path[PATH_MAX],text[96];struct process_stamp stamp;
+        if(process_stamp(getpid(),&stamp)||snprintf(path,sizeof(path),"%s.child",handle->root)>=(int)sizeof(path))_exit(80);
+        int own=open(path,O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600);
+        int size=snprintf(text,sizeof(text),"%ld %" PRIu64 "\n",(long)getpid(),stamp.ticks);
+        if(own<0||store_write_all(own,text,(size_t)size)||fsync(own)||close(own))_exit(80);
+        int zero=open("/dev/null",O_RDWR|O_CLOEXEC);if(zero<0)_exit(81);
+        for(int i=0;i<3;++i)if(dup2(zero,i)<0||fcntl(i,F_SETFD,0))_exit(81);
+        int keep[]={0,1,2,pair[1],backend,reports[1]};
+        if(close_except(keep,6)||isolate(handle->root,image,NULL)||clearenv())_exit(82);
+        struct rlimit cpu={3,4},data={32u*1024*1024,32u*1024*1024},core={0,0};
+        if(setrlimit(RLIMIT_CPU,&cpu)||setrlimit(RLIMIT_DATA,&data)||setrlimit(RLIMIT_CORE,&core)||bus_guard(parent)||unix_byte_channel_guard(pair[1],parent))_exit(83);
+        for(unsigned i=3;i<6;++i)if(fcntl(keep[i],F_SETFD,0))_exit(84);
+        alarm(12);if(raise(SIGSTOP))_exit(84);
+        char a[24],b[24],c[24],d[24];snprintf(a,sizeof(a),"%d",pair[1]);snprintf(b,sizeof(b),"%d",backend);
+        snprintf(c,sizeof(c),"%d",reports[1]);snprintf(d,sizeof(d),"%ld",(long)parent);
+        execl("/usr/bin/dbus-daemon","private-bus-relay","--relay-actor",a,b,c,d,(char *)NULL);_exit(85);
+    }
+    live=1;int status=0;pid_t waited;
+    do{waited=waitpid(child,&status,WUNTRACED);}while(waited<0&&errno==EINTR);
+    int stopped=waited==child&&WIFSTOPPED(status)&&WSTOPSIG(status)==SIGSTOP;
+    if(!stopped){
+        if((waited==child&&(WIFEXITED(status)||WIFSIGNALED(status)))||(waited<0&&errno==ECHILD))live=0;
+        goto failed;
+    }
+    int extras[]={backend,reports[1]};
+    if(!private_view(child,pair[1],extras,1,1))goto failed;
+    close(backend);backend=-1;close(pair[1]);pair[1]=-1;close(reports[1]);reports[1]=-1;
+    if(kill(child,SIGCONT))goto failed;
+    uint32_t marker=0;
+    if(full(reports[0],&marker,sizeof(marker))||marker!=0x4c525931u)goto failed;
+    char path[80];struct stat expected,actual;snprintf(path,sizeof(path),"/proc/%ld/exe",(long)child);
+    if(stat(image,&expected)||stat(path,&actual)||actual.st_dev!=expected.st_dev||actual.st_ino!=expected.st_ino||
+        !private_view(child,-1,extras,0,1))goto failed;
+    handle->pid=child;handle->report=reports[0];return pair[0];
+failed:
+    if(live){int status;kill(child,SIGKILL);while(waitpid(child,&status,0)<0&&errno==EINTR){}}
+    if(backend>=0)close(backend);
+    for(unsigned i=0;i<2;++i){if(pair[i]>=0)close(pair[i]);if(reports[i]>=0)close(reports[i]);}
+    return -1;
+}
+static void finish_relay(struct relay_handle *handle,unsigned epoch,int origin){
+    if(handle->pid<2)return;
+    struct relay_report report={0};int received=!full(handle->report,&report,sizeof(report));close(handle->report);handle->report=-1;
+    int status=0;pid_t done;do{done=waitpid(handle->pid,&status,0);}while(done<0&&errno==EINTR);
+    check(received&&report.checks==11&&!report.failures&&report.stats.result==RELAY_EOF&&report.stats.origin==origin);
+    check(done==handle->pid&&WIFEXITED(status)&&!WEXITSTATUS(status));
+    check(received&&report.stats.maximum_output<=2*BUS_AUTH_OUTPUT&&report.stats.maximum_pending<=1024&&
+        report.stats.read_bytes[0]&&report.stats.read_bytes[1]&&report.stats.written_bytes[0]&&report.stats.written_bytes[1]);
+    check(!rmdir(handle->root));handle->pid=-1;
+    printf("{\"event\":\"private-bus-relay\",\"epoch\":%u,\"actor_checks\":%u,\"failures\":%u,\"result\":%d,\"origin\":%d,\"bounded\":%s}\n",
+        epoch,report.checks,report.failures,report.stats.result,report.stats.origin,received&&report.stats.maximum_output<=2*BUS_AUTH_OUTPUT&&report.stats.maximum_pending<=1024?"true":"false");
+}
 static int run_epoch(const char *root,const char *executable,const char *binding,int listener_fd,const int reload[2],const char *endpoint,unsigned epoch,char guid[33]){
     int logs[2];check(!pipe2(logs,O_CLOEXEC));if(failures)return -1;
     pid_t parent=getpid(),child=fork();check(child>=0);if(child<0)return -1;
@@ -258,23 +328,24 @@ static int run_epoch(const char *root,const char *executable,const char *binding
     close(logs[1]);int status=0;pid_t waited;do{waited=waitpid(child,&status,WUNTRACED);}while(waited<0&&errno==EINTR);
     check(waited==child&&WIFSTOPPED(status)&&WSTOPSIG(status)==SIGSTOP);
     if(waited!=child||!WIFSTOPPED(status)){close(logs[0]);return -1;}
-    int admitted=WIFSTOPPED(status)&&private_view(child,listener_fd,reload,1);check(admitted);
+    int admitted=WIFSTOPPED(status)&&private_view(child,listener_fd,reload,1,0);check(admitted);
     if(admitted)check(!kill(child,SIGCONT));else kill(child,SIGKILL);
-    int held=-1,client=-1;
+    int held=-1,client=-1;struct relay_handle relay={.pid=-1,.report=-1};
     if(admitted&&epoch){
         char image[80];struct stat actual,expected;snprintf(image,sizeof(image),"/proc/%ld/exe",(long)child);int ready=0;
         if(!stat("/usr/bin/dbus-daemon",&expected))for(unsigned i=0;i<300;++i){
             if(!stat(image,&actual)&&actual.st_dev==expected.st_dev&&actual.st_ino==expected.st_ino){ready=1;break;}
             struct timespec pause={0,10000000};nanosleep(&pause,NULL);}
-        check(ready);check(ready&&private_view(child,listener_fd,reload,0));
-        if(ready)client=connect_bus(endpoint);check(client>=0);
+        check(ready);check(ready&&private_view(child,listener_fd,reload,0,0));
+        if(ready){int backend=connect_bus(endpoint);if(backend>=0)client=start_relay(root,executable,backend,&relay);}check(client>=0);
         if(client>=0){
-            char body[128]={0};check(!gated_auth(client,guid));check(strlen(guid)==32);
+            char body[128]={0};check(!relay_auth(client,guid));check(strlen(guid)==32);
             check(!method(client,"Hello",1,0,body,sizeof(body))&&!strncmp(body,":1.",3));
             check(!method(client,"GetId",2,0,body,sizeof(body))&&strlen(body)==32);
             check(!method(client,"ListNames",3,1,body,sizeof(body)));
             check(!method(client,"ReloadConfig",4,1,body,sizeof(body)));
             held=dup(client);check(held>=0);close(client);client=-1;
+            if(epoch==2&&held>=0){close(held);held=-1;finish_relay(&relay,epoch,BUS_CLIENT);}
         }
         /* Observe transport negotiation separately from small FD-count limits.
          * The byte adapter does not implement negotiated descriptor passing. */
@@ -285,6 +356,7 @@ static int run_epoch(const char *root,const char *executable,const char *binding
     }
     do{waited=waitpid(child,&status,0);}while(waited<0&&errno==EINTR);
     check(waited==child&&WIFEXITED(status)&&WEXITSTATUS(status)==0);
+    if(relay.pid>=2)finish_relay(&relay,epoch,BUS_BACKEND);
     /* Bounded private stderr only; never a shared system log. */
     char log[8192];size_t bytes=0;ssize_t got;
     while(bytes<sizeof(log)&&(got=read(logs[0],log+bytes,sizeof(log)-bytes))>0)bytes+=(size_t)got;
@@ -324,6 +396,11 @@ static int coordinator(const char *base,const char *executable,const char *bindi
 }
 int main(int argc,char **argv){
     if(argc==2&&!strcmp(argv[1],"--actor"))return own_actor();
+    if(argc==6&&!strcmp(argv[1],"--relay-actor")){
+        long values[4];for(unsigned i=0;i<4;++i){char *end;values[i]=strtol(argv[i+2],&end,10);if(*end||values[i]<3||values[i]>INT_MAX)return 2;}
+        if(values[0]==values[1]||values[0]==values[2]||values[1]==values[2]||getppid()!=values[3])return 2;
+        return relay_actor((int)values[0],(int)values[1],(int)values[2],(pid_t)values[3]);
+    }
     if(argc!=4||strcmp(argv[1],"--run")||getuid()||geteuid()||getgid()||getegid())return 2;
     const char prefix[]="/bkupgrade/data/opt/lisa-controller-lab/private-bus.";const char *base=argv[2];
     if(strncmp(base,prefix,sizeof(prefix)-1))return 2;size_t suffix=strlen(base+sizeof(prefix)-1);if(suffix<6||suffix>16)return 2;

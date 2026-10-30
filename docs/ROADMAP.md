@@ -219,3 +219,9 @@ an own pipelined client while preserving the real private daemon's OK and
 restricted method replies. Split/limit/deadline/backpressure tests pass. Actual
 relay I/O/ownership and SDK integration remain required; this is a qualified
 state machine, not an installed broker or permanent mode switch.
+
+The [bounded byte-stream relay](BUS_BYTE_RELAY.md) now runs as a separate sealed
+actor with actual private-bus method traffic. Host fixtures force short writes,
+backpressure and timeout/rejection paths; two speaker epochs verify client/backend
+EOF and descriptor cleanup. Actual SDK binding, full holder lifecycle and
+permanent mode/boot/voice composition remain pending.

@@ -51,9 +51,9 @@ It limits message sizes, bytes, connections, names, matches and replies. Only
 Hello/GetId method calls are allowed in this fixture; ListNames and ReloadConfig
 return AccessDenied. This is an own-client test policy, not an SDK service schema.
 
-The speaker passed **70 checks**: 15 own-ELF syscall controls, 50 coordinator checks
-and five outer-parent checks. Two fresh daemon epochs authenticate and answer
-methods. Their generated bus identifiers differ. A retained client duplicate is
+The speaker passed **99 checks**: 15 own-ELF syscall controls, 57 coordinator checks,
+five outer-parent checks and 11 checks in each of two sealed relay actors.
+Two fresh daemon epochs authenticate and answer methods. Their generated bus identifiers differ. A retained client duplicate is
 drained to real EOF after daemon termination; the parent closes all listener,
 reload and client references before starting the next epoch. Every child is
 reaped. These are actual private-bus queues, not SDK telemetry/batch evidence.
@@ -67,10 +67,10 @@ cleanup. This stage does not add a separate crash-injection acceptance result.
 
 Qualified ARM SHA256 values:
 
-- Probe: `1f553ed8f9e52bac9f0a154ad2f3b6535882950b88f59abe0a419508fea09ce5`
+- Probe: `4401f5c5d54f8e57f3d2ee43f18becbc2b8f1e53276fdb50820293eaef3a6e1f`
 - Binding: `7d330f59f0e62c18230408150b582163603a157810e1bbfb0d7bc126d6f1881b`
 
-Ruff, public-source validation and **1381 Python/HA tests** pass. CI builds 44 native
+Ruff, public-source validation and **1391 Python/HA tests** pass. CI builds 45 native
 targets and compiles the new binding with fortified host GCC. The actual daemon
 trial is device-only; CI neither obtains nor distributes firmware libraries.
 
@@ -81,12 +81,14 @@ cannot provide that advertised transport: kernel ancillary calls remain denied
 and readv drops incoming control objects. The diagnostic deliberately reports
 `fd_negotiation_disabled=false` for that raw daemon, never full isolation or SDK
 readiness. The [bounded authentication gate](BUS_AUTH_GATE.md) now supplies a
-verified no-FD path for the own in-memory client: it forwards the real daemon OK,
+verified no-FD path through the [sealed byte relay](BUS_BYTE_RELAY.md) for an own
+client on an actual socket: it forwards the real daemon OK,
 answers negotiation locally with ERROR and sends only BEGIN to the daemon. This
 path reports `auth_gate_verified=true`. The separate raw connection still obtains
-AGREE_UNIX_FD as a control. An actual relay actor must compose the gate with socket
-ownership/I/O before SDK use. Small FD-count limits alone are not evidence of a
-byte-only authentication contract.
+AGREE_UNIX_FD as a control. The relay actor composes the gate with socket I/O in
+this bounded trial; a separate SDK sibling/client-binding and full holder
+lifecycle still require qualification. Small FD-count limits alone are not
+evidence of a byte-only authentication contract.
 
 Immutable client binding placement, actual SDK service authorization, protocol
 framing/receiver lifecycle, real identity/queue handling, permanent supervision
